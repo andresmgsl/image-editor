@@ -16,7 +16,7 @@
 - Secrets (`ANTHROPIC_API_KEY`, `FAL_KEY`, IMAP/SMTP creds, `ALLOWLIST`) come from env/`.env`; never commit `.env`.
 - Claude choices are by **catalog `id`** (stable internal key), never by raw Fal endpoint string.
 - **Fal endpoint IDs and the exact `@fal-ai/client` API are verified against fal.ai's live docs during Task 6** — do not trust the placeholders below without checking.
-- **Exact Claude model id and Messages/tool-use params are confirmed via the `claude-api` skill during Task 5.**
+- **Claude model id is `claude-opus-4-8`** (confirmed via the `claude-api` skill; the interpreter uses `client.messages.create` with forced `tool_choice` and no `thinking` param).
 - "Low res" = max 1024px long edge, JPEG quality ~80.
 
 ---
@@ -486,7 +486,7 @@ git commit -m "feat: low-res downscale and image download helpers"
 - Create: `src/interpreter.ts`
 - Test: `test/interpreter.test.ts`
 
-> Before writing this task's code, consult the `claude-api` skill to confirm the exact Claude model id and the Messages tool-use request shape. This plan uses `claude-sonnet-5` and standard tool-use; adjust if the skill says otherwise.
+> The `claude-api` skill has been consulted: use model id `claude-opus-4-8` (the skill's default — do not downgrade for cost without the user asking) with standard Messages tool-use (`client.messages.create` + forced `tool_choice`). Do not pass a `thinking` param — omitting it runs Opus 4.8 without thinking, which is right for this fast structured routing call.
 
 **Interfaces:**
 - Consumes: `CATALOG`, `isValidChoice`, `defaultModelFor` from `src/catalog.js`.
@@ -604,7 +604,7 @@ export async function interpret(
   input: { text: string; hasImage: boolean },
 ): Promise<Decision> {
   const res = await client.messages.create({
-    model: "claude-sonnet-5",
+    model: "claude-opus-4-8",
     max_tokens: 1024,
     system: systemPrompt(),
     tools: [DECIDE_TOOL],
@@ -1380,8 +1380,17 @@ const anthropic = new Anthropic({ apiKey: config.anthropicApiKey });
 const mailbox = new Mailbox(config);
 const processed = loadProcessedStore(".processed/uids.json");
 
+// Adapt the real @fal-ai/client to our FalLike interface. The real
+// `fal.storage.upload` expects a Blob, so wrap the Buffer (verified in Task 6).
+const falAdapter: FalLike = {
+  subscribe: (endpoint, opts) =>
+    fal.subscribe(endpoint, opts) as ReturnType<FalLike["subscribe"]>,
+  // Wrap Buffer in a Uint8Array so it satisfies BlobPart under strict lib types.
+  storage: { upload: (data: Buffer) => fal.storage.upload(new Blob([new Uint8Array(data)])) },
+};
+
 const produceImage = async (args: { endpoint: string; prompt: string; inputImage?: Buffer }) => {
-  const url = await runModel(fal as unknown as FalLike, args);
+  const url = await runModel(falAdapter, args);
   const full = await downloadImage(url);
   return toLowRes(full);
 };
