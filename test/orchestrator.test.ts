@@ -26,8 +26,13 @@ function deps(over: Partial<OrchestratorDeps> = {}): OrchestratorDeps {
     produceImage: vi.fn().mockResolvedValue(Buffer.from("img")),
     sendReply: vi.fn().mockResolvedValue(undefined),
     processed: { has: () => false, add: vi.fn() },
+    attempts: { record: vi.fn().mockReturnValue(1), clear: vi.fn() },
     ...over,
   };
+}
+
+function anthropicThrowing(): AnthropicLike {
+  return { messages: { async create() { throw new Error("api down"); } } };
 }
 
 describe("processEmail", () => {
@@ -69,5 +74,24 @@ describe("processEmail", () => {
     expect(r).toBe("error");
     const reply = (d.sendReply as any).mock.calls[0][0];
     expect(reply.text).toMatch(/failed/i);
+  });
+
+  it("retries (throws, no reply, not marked) when interpret fails under the cap", async () => {
+    const record = vi.fn().mockReturnValue(1);
+    const d = deps({ anthropic: anthropicThrowing(), attempts: { record, clear: vi.fn() } });
+    await expect(processEmail(baseEmail(), d)).rejects.toThrow();
+    expect(record).toHaveBeenCalledWith(1);
+    expect(d.sendReply).not.toHaveBeenCalled();
+    expect(d.processed.add).not.toHaveBeenCalled();
+  });
+
+  it("gives up with an error reply once the interpret attempt cap is reached", async () => {
+    const record = vi.fn().mockReturnValue(3);
+    const d = deps({ anthropic: anthropicThrowing(), attempts: { record, clear: vi.fn() } });
+    const r = await processEmail(baseEmail(), d);
+    expect(r).toBe("error");
+    const reply = (d.sendReply as any).mock.calls[0][0];
+    expect(reply.text).toMatch(/couldn't understand|rephrase/i);
+    expect(d.processed.add).toHaveBeenCalledWith(1);
   });
 });

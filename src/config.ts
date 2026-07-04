@@ -20,8 +20,14 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     imap: { host: req(env, "IMAP_HOST"), user: req(env, "IMAP_USER"), password: req(env, "IMAP_PASSWORD") },
     smtp: { host: req(env, "SMTP_HOST"), user: req(env, "SMTP_USER"), password: req(env, "SMTP_PASSWORD") },
     allowlist: (env.ALLOWLIST ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),
-    pollIntervalSeconds: env.POLL_INTERVAL_SECONDS ? Number(env.POLL_INTERVAL_SECONDS) : 15,
+    pollIntervalSeconds: parsePollInterval(env.POLL_INTERVAL_SECONDS),
   };
+}
+
+function parsePollInterval(raw: string | undefined): number {
+  if (!raw) return 15;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 15;
 }
 
 export function isAllowed(config: AppConfig, sender: string): boolean {

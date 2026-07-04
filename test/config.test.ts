@@ -16,6 +16,16 @@ describe("loadConfig", () => {
     expect(c.pollIntervalSeconds).toBe(15);
   });
 
+  it("falls back to 15 when POLL_INTERVAL_SECONDS is non-numeric", () => {
+    const c = loadConfig({ ...base, POLL_INTERVAL_SECONDS: "abc" } as NodeJS.ProcessEnv);
+    expect(c.pollIntervalSeconds).toBe(15);
+  });
+
+  it("uses a valid POLL_INTERVAL_SECONDS override", () => {
+    const c = loadConfig({ ...base, POLL_INTERVAL_SECONDS: "30" } as NodeJS.ProcessEnv);
+    expect(c.pollIntervalSeconds).toBe(30);
+  });
+
   it("throws on a missing required var", () => {
     const { ANTHROPIC_API_KEY, ...rest } = base;
     expect(() => loadConfig(rest as NodeJS.ProcessEnv)).toThrow(/ANTHROPIC_API_KEY/);

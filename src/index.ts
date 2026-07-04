@@ -4,6 +4,7 @@ import { fal } from "@fal-ai/client";
 import { loadConfig } from "./config.js";
 import { Mailbox } from "./mailbox.js";
 import { loadProcessedStore } from "./processed.js";
+import { loadAttemptStore } from "./attempts.js";
 import { runModel, type FalLike } from "./fal-runner.js";
 import { downloadImage, toLowRes } from "./image.js";
 import { runLoop, type LoopDeps } from "./loop.js";
@@ -14,6 +15,7 @@ fal.config({ credentials: config.falKey });
 const anthropic = new Anthropic({ apiKey: config.anthropicApiKey });
 const mailbox = new Mailbox(config);
 const processed = loadProcessedStore(".processed/uids.json");
+const attempts = loadAttemptStore(".processed/attempts.json");
 
 // Adapt the real @fal-ai/client to our FalLike interface. The real
 // `fal.storage.upload` expects a Blob, so wrap the Buffer (verified in Task 6).
@@ -35,6 +37,7 @@ const deps: LoopDeps = {
   produceImage,
   sendReply: (reply) => mailbox.send(reply),
   processed,
+  attempts,
   mailbox,
 };
 

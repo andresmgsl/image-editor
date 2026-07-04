@@ -28,9 +28,14 @@ export async function runLoop(
   deps: LoopDeps,
   intervalMs: number,
   shouldStop: () => boolean,
+  once: (deps: LoopDeps) => Promise<void> = runOnce,
 ): Promise<void> {
   while (!shouldStop()) {
-    await runOnce(deps);
+    try {
+      await once(deps);
+    } catch (err) {
+      console.error("Poll cycle failed; will retry next interval:", err);
+    }
     await new Promise((r) => setTimeout(r, intervalMs));
   }
 }

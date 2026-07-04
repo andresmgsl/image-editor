@@ -1,8 +1,9 @@
 import { type AppConfig, isAllowed } from "./config.js";
-import { type AnthropicLike, interpret } from "./interpreter.js";
+import { type Decision, type AnthropicLike, interpret } from "./interpreter.js";
 import { getModel } from "./catalog.js";
 import { type IncomingEmail, type OutgoingReply, buildReply } from "./mailbox.js";
 import { type ProcessedStore } from "./processed.js";
+import { type AttemptStore } from "./attempts.js";
 
 export type ProcessResult =
   | "skipped-duplicate"
@@ -11,12 +12,15 @@ export type ProcessResult =
   | "generated"
   | "error";
 
+export const MAX_INTERPRET_ATTEMPTS = 3;
+
 export interface OrchestratorDeps {
   config: AppConfig;
   anthropic: AnthropicLike;
   produceImage: (args: { endpoint: string; prompt: string; inputImage?: Buffer }) => Promise<Buffer>;
   sendReply: (reply: OutgoingReply) => Promise<void>;
   processed: ProcessedStore;
+  attempts: AttemptStore;
 }
 
 export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps): Promise<ProcessResult> {
@@ -28,10 +32,32 @@ export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps)
   }
 
   const instruction = [email.subject, email.text].filter(Boolean).join("\n");
-  const decision = await interpret(deps.anthropic, {
-    text: instruction,
-    hasImage: !!email.imageAttachment,
-  });
+  let rawDecision: Decision;
+  try {
+    rawDecision = await interpret(deps.anthropic, {
+      text: instruction,
+      hasImage: !!email.imageAttachment,
+    });
+  } catch (err) {
+    const attempt = deps.attempts.record(email.uid);
+    if (attempt < MAX_INTERPRET_ATTEMPTS) {
+      console.error(
+        `Interpret failed for uid ${email.uid} (attempt ${attempt}/${MAX_INTERPRET_ATTEMPTS}), will retry next poll:`,
+        err,
+      );
+      throw err; // not marked processed -> retried on the next poll cycle
+    }
+    console.error(`Interpret failed for uid ${email.uid} (gave up after ${attempt} attempts):`, err);
+    await deps.sendReply(
+      buildReply(email, {
+        text: "Sorry — I couldn't understand that request after a few tries. Please rephrase it and send it again.",
+      }),
+    );
+    deps.processed.add(email.uid);
+    return "error";
+  }
+  deps.attempts.clear(email.uid);
+  const decision = rawDecision;
 
   const needsClarify =
     decision.task === "clarify" || (decision.task === "edit" && !email.imageAttachment);
