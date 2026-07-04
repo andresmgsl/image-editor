@@ -20,7 +20,7 @@ const processed = loadProcessedStore(".processed/uids.json");
 const falAdapter: FalLike = {
   subscribe: (endpoint, opts) =>
     fal.subscribe(endpoint, opts) as ReturnType<FalLike["subscribe"]>,
-  storage: { upload: (data: Buffer) => fal.storage.upload(new Blob([data])) },
+  storage: { upload: (data: Buffer) => fal.storage.upload(new Blob([new Uint8Array(data)])) },
 };
 
 const produceImage = async (args: { endpoint: string; prompt: string; inputImage?: Buffer }) => {
