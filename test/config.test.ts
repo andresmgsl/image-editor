@@ -3,15 +3,17 @@ import { loadConfig, isAllowed } from "../src/config.js";
 
 const base = {
   ANTHROPIC_API_KEY: "a", FAL_KEY: "f",
-  IMAP_HOST: "imap", IMAP_USER: "iu", IMAP_PASSWORD: "ip",
-  SMTP_HOST: "smtp", SMTP_USER: "su", SMTP_PASSWORD: "sp",
+  GMAIL_IMPERSONATED_USER: "images@lafamilia.so",
+  GOOGLE_SERVICE_ACCOUNT_KEY_FILE: "/keys/sa.json",
   ALLOWLIST: "Alice@Example.com, bob@example.com",
 };
 
 describe("loadConfig", () => {
-  it("parses env, allowlist (lowercased), and default poll interval", () => {
+  it("parses gmail config, allowlist (lowercased), and default poll interval", () => {
     const c = loadConfig(base as NodeJS.ProcessEnv);
     expect(c.anthropicApiKey).toBe("a");
+    expect(c.gmail.impersonatedUser).toBe("images@lafamilia.so");
+    expect(c.gmail.serviceAccountKeyFile).toBe("/keys/sa.json");
     expect(c.allowlist).toEqual(["alice@example.com", "bob@example.com"]);
     expect(c.pollIntervalSeconds).toBe(15);
   });
@@ -27,8 +29,8 @@ describe("loadConfig", () => {
   });
 
   it("throws on a missing required var", () => {
-    const { ANTHROPIC_API_KEY, ...rest } = base;
-    expect(() => loadConfig(rest as NodeJS.ProcessEnv)).toThrow(/ANTHROPIC_API_KEY/);
+    const { GMAIL_IMPERSONATED_USER, ...rest } = base;
+    expect(() => loadConfig(rest as NodeJS.ProcessEnv)).toThrow(/GMAIL_IMPERSONATED_USER/);
   });
 });
 

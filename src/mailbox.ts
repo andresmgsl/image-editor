@@ -1,7 +1,5 @@
 import { simpleParser } from "mailparser";
-import { ImapFlow } from "imapflow";
-import nodemailer from "nodemailer";
-import type { AppConfig } from "./config.js";
+import MailComposer from "nodemailer/lib/mail-composer/index.js";
 
 export interface IncomingEmail {
   id: string;
@@ -60,69 +58,61 @@ export function buildReply(
   };
 }
 
-export class Mailbox {
-  constructor(private config: AppConfig) {}
+export interface GmailApi {
+  users: {
+    messages: {
+      list(params: { userId: string; q: string }): Promise<{ data: { messages?: Array<{ id?: string | null }> } }>;
+      get(params: { userId: string; id: string; format: "raw" }): Promise<{ data: { id?: string | null; threadId?: string | null; raw?: string | null } }>;
+      modify(params: { userId: string; id: string; requestBody: { removeLabelIds: string[] } }): Promise<unknown>;
+      send(params: { userId: string; requestBody: { raw: string; threadId?: string } }): Promise<unknown>;
+    };
+  };
+}
 
-  private client(): ImapFlow {
-    return new ImapFlow({
-      host: this.config.imap.host,
-      port: 993,
-      secure: true,
-      auth: { user: this.config.imap.user, pass: this.config.imap.password },
-      logger: false,
-    });
-  }
+export class GmailMailbox {
+  constructor(private api: GmailApi, private user: string) {}
 
   async fetchUnread(): Promise<IncomingEmail[]> {
-    const client = this.client();
+    const list = await this.api.users.messages.list({ userId: "me", q: "is:unread in:inbox" });
+    const ids = (list.data.messages ?? [])
+      .map((m) => m.id)
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
     const out: IncomingEmail[] = [];
-    await client.connect();
-    try {
-      const lock = await client.getMailboxLock("INBOX");
-      try {
-        for await (const msg of client.fetch({ seen: false }, { uid: true, source: true })) {
-          if (!msg.source) continue;
-          out.push(await parseIncoming(msg.source as Buffer, String(msg.uid), ""));
-        }
-      } finally {
-        lock.release();
-      }
-    } finally {
-      await client.logout();
+    for (const id of ids) {
+      const msg = await this.api.users.messages.get({ userId: "me", id, format: "raw" });
+      const raw = msg.data.raw;
+      if (!raw) continue;
+      const buf = Buffer.from(raw, "base64url");
+      out.push(await parseIncoming(buf, msg.data.id ?? id, msg.data.threadId ?? ""));
     }
     return out;
   }
 
   async markRead(id: string): Promise<void> {
-    const client = this.client();
-    await client.connect();
-    try {
-      const lock = await client.getMailboxLock("INBOX");
-      try {
-        await client.messageFlagsAdd({ uid: id }, ["\\Seen"], { uid: true });
-      } finally {
-        lock.release();
-      }
-    } finally {
-      await client.logout();
-    }
+    await this.api.users.messages.modify({
+      userId: "me",
+      id,
+      requestBody: { removeLabelIds: ["UNREAD"] },
+    });
   }
 
   async send(reply: OutgoingReply): Promise<void> {
-    const transport = nodemailer.createTransport({
-      host: this.config.smtp.host,
-      port: 465,
-      secure: true,
-      auth: { user: this.config.smtp.user, pass: this.config.smtp.password },
-    });
-    await transport.sendMail({
-      from: this.config.smtp.user,
+    const mail = new MailComposer({
+      from: this.user,
       to: reply.to,
       subject: reply.subject,
       text: reply.text,
       inReplyTo: reply.inReplyTo || undefined,
       references: reply.references || undefined,
       attachments: reply.image ? [{ filename: reply.filename, content: reply.image }] : [],
+    });
+    const mime: Buffer = await new Promise((resolve, reject) => {
+      mail.compile().build((err, message) => (err ? reject(err) : resolve(message)));
+    });
+    const raw = mime.toString("base64url");
+    await this.api.users.messages.send({
+      userId: "me",
+      requestBody: { raw, threadId: reply.threadId || undefined },
     });
   }
 }

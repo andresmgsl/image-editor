@@ -6,8 +6,7 @@ import type { AppConfig } from "../src/config.js";
 
 const config: AppConfig = {
   anthropicApiKey: "a", falKey: "f",
-  imap: { host: "", user: "", password: "" },
-  smtp: { host: "", user: "", password: "" },
+  gmail: { impersonatedUser: "images@lafamilia.so", serviceAccountKeyFile: "/keys/sa.json" },
   allowlist: ["alice@example.com"], pollIntervalSeconds: 15,
 };
 
