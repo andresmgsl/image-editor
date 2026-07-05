@@ -6,8 +6,7 @@ import type { AppConfig } from "../src/config.js";
 
 const config: AppConfig = {
   anthropicApiKey: "a", falKey: "f",
-  imap: { host: "", user: "", password: "" },
-  smtp: { host: "", user: "", password: "" },
+  gmail: { impersonatedUser: "images@lafamilia.so", serviceAccountKeyFile: "/keys/sa.json" },
   allowlist: ["alice@example.com"], pollIntervalSeconds: 15,
 };
 
@@ -16,7 +15,7 @@ function anthropicReturning(input: unknown): AnthropicLike {
 }
 
 function baseEmail(over: Partial<IncomingEmail> = {}): IncomingEmail {
-  return { uid: 1, from: "alice@example.com", subject: "make a bike", text: "", messageId: "<m>", references: "", ...over };
+  return { id: "m1", threadId: "t1", from: "alice@example.com", subject: "make a bike", text: "", messageId: "<m>", references: "", ...over };
 }
 
 function deps(over: Partial<OrchestratorDeps> = {}): OrchestratorDeps {
@@ -41,7 +40,7 @@ describe("processEmail", () => {
     const r = await processEmail(baseEmail({ from: "stranger@evil.com" }), d);
     expect(r).toBe("skipped-not-allowed");
     expect(d.sendReply).not.toHaveBeenCalled();
-    expect(d.processed.add).toHaveBeenCalledWith(1);
+    expect(d.processed.add).toHaveBeenCalledWith("m1");
   });
 
   it("skips already-processed emails", async () => {
@@ -80,7 +79,7 @@ describe("processEmail", () => {
     const record = vi.fn().mockReturnValue(1);
     const d = deps({ anthropic: anthropicThrowing(), attempts: { record, clear: vi.fn() } });
     await expect(processEmail(baseEmail(), d)).rejects.toThrow();
-    expect(record).toHaveBeenCalledWith(1);
+    expect(record).toHaveBeenCalledWith("m1");
     expect(d.sendReply).not.toHaveBeenCalled();
     expect(d.processed.add).not.toHaveBeenCalled();
   });
@@ -92,6 +91,6 @@ describe("processEmail", () => {
     expect(r).toBe("error");
     const reply = (d.sendReply as any).mock.calls[0][0];
     expect(reply.text).toMatch(/couldn't understand|rephrase/i);
-    expect(d.processed.add).toHaveBeenCalledWith(1);
+    expect(d.processed.add).toHaveBeenCalledWith("m1");
   });
 });

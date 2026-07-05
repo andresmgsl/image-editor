@@ -1,8 +1,7 @@
 export interface AppConfig {
   anthropicApiKey: string;
   falKey: string;
-  imap: { host: string; user: string; password: string };
-  smtp: { host: string; user: string; password: string };
+  gmail: { impersonatedUser: string; serviceAccountKeyFile: string };
   allowlist: string[];
   pollIntervalSeconds: number;
 }
@@ -17,8 +16,10 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
   return {
     anthropicApiKey: req(env, "ANTHROPIC_API_KEY"),
     falKey: req(env, "FAL_KEY"),
-    imap: { host: req(env, "IMAP_HOST"), user: req(env, "IMAP_USER"), password: req(env, "IMAP_PASSWORD") },
-    smtp: { host: req(env, "SMTP_HOST"), user: req(env, "SMTP_USER"), password: req(env, "SMTP_PASSWORD") },
+    gmail: {
+      impersonatedUser: req(env, "GMAIL_IMPERSONATED_USER"),
+      serviceAccountKeyFile: req(env, "GOOGLE_SERVICE_ACCOUNT_KEY_FILE"),
+    },
     allowlist: (env.ALLOWLIST ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),
     pollIntervalSeconds: parsePollInterval(env.POLL_INTERVAL_SECONDS),
   };

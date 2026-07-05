@@ -4,7 +4,7 @@ import type { IncomingEmail } from "./mailbox.js";
 export interface LoopDeps extends OrchestratorDeps {
   mailbox: {
     fetchUnread(): Promise<IncomingEmail[]>;
-    markSeen(uid: number): Promise<void>;
+    markRead(id: string): Promise<void>;
   };
 }
 
@@ -16,10 +16,10 @@ export async function runOnce(
   for (const email of emails) {
     try {
       const result = await process(email, deps);
-      await deps.mailbox.markSeen(email.uid);
-      console.log(`[uid ${email.uid}] ${email.from} -> ${result}`);
+      await deps.mailbox.markRead(email.id);
+      console.log(`[msg ${email.id}] ${email.from} -> ${result}`);
     } catch (err) {
-      console.error(`[uid ${email.uid}] unhandled error:`, err);
+      console.error(`[msg ${email.id}] unhandled error:`, err);
     }
   }
 }

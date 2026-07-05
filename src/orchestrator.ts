@@ -24,10 +24,10 @@ export interface OrchestratorDeps {
 }
 
 export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps): Promise<ProcessResult> {
-  if (deps.processed.has(email.uid)) return "skipped-duplicate";
+  if (deps.processed.has(email.id)) return "skipped-duplicate";
 
   if (!isAllowed(deps.config, email.from)) {
-    deps.processed.add(email.uid);
+    deps.processed.add(email.id);
     return "skipped-not-allowed";
   }
 
@@ -39,24 +39,24 @@ export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps)
       hasImage: !!email.imageAttachment,
     });
   } catch (err) {
-    const attempt = deps.attempts.record(email.uid);
+    const attempt = deps.attempts.record(email.id);
     if (attempt < MAX_INTERPRET_ATTEMPTS) {
       console.error(
-        `Interpret failed for uid ${email.uid} (attempt ${attempt}/${MAX_INTERPRET_ATTEMPTS}), will retry next poll:`,
+        `Interpret failed for msg ${email.id} (attempt ${attempt}/${MAX_INTERPRET_ATTEMPTS}), will retry next poll:`,
         err,
       );
       throw err; // not marked processed -> retried on the next poll cycle
     }
-    console.error(`Interpret failed for uid ${email.uid} (gave up after ${attempt} attempts):`, err);
+    console.error(`Interpret failed for msg ${email.id} (gave up after ${attempt} attempts):`, err);
     await deps.sendReply(
       buildReply(email, {
         text: "Sorry — I couldn't understand that request after a few tries. Please rephrase it and send it again.",
       }),
     );
-    deps.processed.add(email.uid);
+    deps.processed.add(email.id);
     return "error";
   }
-  deps.attempts.clear(email.uid);
+  deps.attempts.clear(email.id);
   const decision = rawDecision;
 
   const needsClarify =
@@ -68,7 +68,7 @@ export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps)
         ? decision.message
         : "It looks like you want to edit an image, but none was attached. Please reply with the image attached and describe the change.";
     await deps.sendReply(buildReply(email, { text: message }));
-    deps.processed.add(email.uid);
+    deps.processed.add(email.id);
     return "clarified";
   }
 
@@ -86,16 +86,16 @@ export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps)
         filename: "result.jpg",
       }),
     );
-    deps.processed.add(email.uid);
+    deps.processed.add(email.id);
     return "generated";
   } catch (err) {
-    console.error(`Generation failed for uid ${email.uid}:`, err);
+    console.error(`Generation failed for msg ${email.id}:`, err);
     await deps.sendReply(
       buildReply(email, {
         text: "Sorry — that request failed to generate. Try rephrasing it and send again.",
       }),
     );
-    deps.processed.add(email.uid);
+    deps.processed.add(email.id);
     return "error";
   }
 }

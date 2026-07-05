@@ -10,14 +10,14 @@ describe("attempt store", () => {
     rmSync(path, { force: true });
 
     const s = loadAttemptStore(path);
-    expect(s.record(5)).toBe(1);
-    expect(s.record(5)).toBe(2);
+    expect(s.record("m-5")).toBe(1);
+    expect(s.record("m-5")).toBe(2);
 
     const reloaded = loadAttemptStore(path);
-    expect(reloaded.record(5)).toBe(3); // persisted across reload
+    expect(reloaded.record("m-5")).toBe(3);
 
-    reloaded.clear(5);
-    expect(loadAttemptStore(path).record(5)).toBe(1); // cleared
+    reloaded.clear("m-5");
+    expect(loadAttemptStore(path).record("m-5")).toBe(1);
 
     rmSync(path, { force: true });
   });

@@ -2,16 +2,16 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
 export interface ProcessedStore {
-  has(uid: number): boolean;
-  add(uid: number): void;
+  has(id: string): boolean;
+  add(id: string): void;
 }
 
 export function loadProcessedStore(filePath: string): ProcessedStore {
-  const set = new Set<number>();
+  const set = new Set<string>();
   if (existsSync(filePath)) {
     try {
-      const arr = JSON.parse(readFileSync(filePath, "utf8")) as number[];
-      for (const n of arr) set.add(n);
+      const arr = JSON.parse(readFileSync(filePath, "utf8")) as string[];
+      for (const s of arr) set.add(s);
     } catch {
       // corrupt or empty file: start fresh
     }
@@ -21,9 +21,9 @@ export function loadProcessedStore(filePath: string): ProcessedStore {
     writeFileSync(filePath, JSON.stringify([...set]));
   };
   return {
-    has: (uid) => set.has(uid),
-    add: (uid) => {
-      set.add(uid);
+    has: (id) => set.has(id),
+    add: (id) => {
+      set.add(id);
       persist();
     },
   };
