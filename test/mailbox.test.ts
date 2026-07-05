@@ -15,9 +15,10 @@ const rawEmail = Buffer.from(
 );
 
 describe("parseIncoming", () => {
-  it("extracts sender (lowercased), subject, text, and message id", async () => {
-    const e = await parseIncoming(rawEmail, 42);
-    expect(e.uid).toBe(42);
+  it("extracts id, threadId, sender (lowercased), subject, text, message id", async () => {
+    const e = await parseIncoming(rawEmail, "m42", "t42");
+    expect(e.id).toBe("m42");
+    expect(e.threadId).toBe("t42");
     expect(e.from).toBe("alice@example.com");
     expect(e.subject).toBe("make a logo");
     expect(e.text).toBe("A minimalist fox logo, orange.");
@@ -28,16 +29,17 @@ describe("parseIncoming", () => {
 
 describe("buildReply", () => {
   const incoming = {
-    uid: 1, from: "alice@example.com", subject: "make a logo",
+    id: "m1", threadId: "t1", from: "alice@example.com", subject: "make a logo",
     text: "", messageId: "<abc@mail>", references: "",
   };
 
-  it("builds an in-thread reply with an image attachment", () => {
+  it("builds an in-thread reply with an image attachment and threadId", () => {
     const r = buildReply(incoming, { text: "done", image: Buffer.from("x"), filename: "result.jpg" });
     expect(r.to).toBe("alice@example.com");
     expect(r.subject).toBe("Re: make a logo");
     expect(r.inReplyTo).toBe("<abc@mail>");
     expect(r.references).toContain("<abc@mail>");
+    expect(r.threadId).toBe("t1");
     expect(r.image).toBeInstanceOf(Buffer);
   });
 

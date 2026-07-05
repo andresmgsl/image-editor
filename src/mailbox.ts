@@ -4,7 +4,8 @@ import nodemailer from "nodemailer";
 import type { AppConfig } from "./config.js";
 
 export interface IncomingEmail {
-  uid: number;
+  id: string;
+  threadId: string;
   from: string;
   subject: string;
   text: string;
@@ -21,15 +22,17 @@ export interface OutgoingReply {
   filename: string;
   inReplyTo: string;
   references: string;
+  threadId: string;
 }
 
-export async function parseIncoming(raw: Buffer, uid: number): Promise<IncomingEmail> {
+export async function parseIncoming(raw: Buffer, id: string, threadId: string): Promise<IncomingEmail> {
   const p = await simpleParser(raw);
   const from = (p.from?.value?.[0]?.address ?? "").toLowerCase();
   const image = p.attachments.find((a) => (a.contentType ?? "").startsWith("image/"));
   const references = Array.isArray(p.references) ? p.references.join(" ") : (p.references ?? "");
   return {
-    uid,
+    id,
+    threadId,
     from,
     subject: p.subject ?? "",
     text: (p.text ?? "").trim(),
@@ -53,20 +56,25 @@ export function buildReply(
     filename: opts.filename ?? "result.jpg",
     inReplyTo: incoming.messageId,
     references,
+    threadId: incoming.threadId,
   };
 }
 
 export class Mailbox {
   constructor(private config: AppConfig) {}
 
-  async fetchUnread(): Promise<IncomingEmail[]> {
-    const client = new ImapFlow({
+  private client(): ImapFlow {
+    return new ImapFlow({
       host: this.config.imap.host,
       port: 993,
       secure: true,
       auth: { user: this.config.imap.user, pass: this.config.imap.password },
       logger: false,
     });
+  }
+
+  async fetchUnread(): Promise<IncomingEmail[]> {
+    const client = this.client();
     const out: IncomingEmail[] = [];
     await client.connect();
     try {
@@ -74,7 +82,7 @@ export class Mailbox {
       try {
         for await (const msg of client.fetch({ seen: false }, { uid: true, source: true })) {
           if (!msg.source) continue;
-          out.push(await parseIncoming(msg.source as Buffer, msg.uid));
+          out.push(await parseIncoming(msg.source as Buffer, String(msg.uid), ""));
         }
       } finally {
         lock.release();
@@ -85,19 +93,13 @@ export class Mailbox {
     return out;
   }
 
-  async markSeen(uid: number): Promise<void> {
-    const client = new ImapFlow({
-      host: this.config.imap.host,
-      port: 993,
-      secure: true,
-      auth: { user: this.config.imap.user, pass: this.config.imap.password },
-      logger: false,
-    });
+  async markRead(id: string): Promise<void> {
+    const client = this.client();
     await client.connect();
     try {
       const lock = await client.getMailboxLock("INBOX");
       try {
-        await client.messageFlagsAdd({ uid: String(uid) }, ["\\Seen"], { uid: true });
+        await client.messageFlagsAdd({ uid: id }, ["\\Seen"], { uid: true });
       } finally {
         lock.release();
       }
