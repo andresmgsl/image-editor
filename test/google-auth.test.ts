@@ -29,4 +29,10 @@ describe("buildGmailAuthOptions", () => {
       /client_email and private_key/,
     );
   });
+
+  it("throws a clear error when the inline key is not valid JSON", () => {
+    expect(() => buildGmailAuthOptions(cfg({ impersonatedUser: "u", serviceAccountKey: "not-json{" }))).toThrow(
+      /not valid JSON/,
+    );
+  });
 });

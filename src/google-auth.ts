@@ -21,7 +21,12 @@ const GMAIL_SCOPES = [
 export function buildGmailAuthOptions(config: AppConfig): JwtOptions {
   const { impersonatedUser, serviceAccountKey, serviceAccountKeyFile } = config.gmail;
   if (serviceAccountKey) {
-    const parsed = JSON.parse(serviceAccountKey) as { client_email?: string; private_key?: string };
+    let parsed: { client_email?: string; private_key?: string };
+    try {
+      parsed = JSON.parse(serviceAccountKey) as { client_email?: string; private_key?: string };
+    } catch {
+      throw new Error("GOOGLE_SERVICE_ACCOUNT_KEY is not valid JSON (paste the full service-account key JSON)");
+    }
     if (!parsed.client_email || !parsed.private_key) {
       throw new Error("GOOGLE_SERVICE_ACCOUNT_KEY JSON must contain client_email and private_key");
     }
