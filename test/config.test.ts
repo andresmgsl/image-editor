@@ -32,6 +32,24 @@ describe("loadConfig", () => {
     const { GMAIL_IMPERSONATED_USER, ...rest } = base;
     expect(() => loadConfig(rest as NodeJS.ProcessEnv)).toThrow(/GMAIL_IMPERSONATED_USER/);
   });
+
+  it("accepts an inline service-account key instead of a file", () => {
+    const { GOOGLE_SERVICE_ACCOUNT_KEY_FILE, ...rest } = base;
+    const c = loadConfig({ ...rest, GOOGLE_SERVICE_ACCOUNT_KEY: '{"client_email":"x","private_key":"y"}' } as NodeJS.ProcessEnv);
+    expect(c.gmail.serviceAccountKey).toBe('{"client_email":"x","private_key":"y"}');
+    expect(c.gmail.serviceAccountKeyFile).toBeUndefined();
+  });
+
+  it("throws when neither SA-key var is set", () => {
+    const { GOOGLE_SERVICE_ACCOUNT_KEY_FILE, ...rest } = base;
+    expect(() => loadConfig(rest as NodeJS.ProcessEnv)).toThrow(/GOOGLE_SERVICE_ACCOUNT_KEY/);
+  });
+
+  it("throws when both SA-key vars are set", () => {
+    expect(() =>
+      loadConfig({ ...base, GOOGLE_SERVICE_ACCOUNT_KEY: '{"client_email":"x","private_key":"y"}' } as NodeJS.ProcessEnv),
+    ).toThrow(/only one/);
+  });
 });
 
 describe("isAllowed", () => {

@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { fal } from "@fal-ai/client";
 import { google } from "googleapis";
 import { loadConfig } from "./config.js";
+import { buildGmailAuthOptions } from "./google-auth.js";
 import { GmailMailbox, type GmailApi } from "./mailbox.js";
 import { loadProcessedStore } from "./processed.js";
 import { loadAttemptStore } from "./attempts.js";
@@ -15,14 +16,7 @@ const config = loadConfig(process.env);
 fal.config({ credentials: config.falKey });
 const anthropic = new Anthropic({ apiKey: config.anthropicApiKey });
 
-const auth = new google.auth.JWT({
-  keyFile: config.gmail.serviceAccountKeyFile,
-  scopes: [
-    "https://www.googleapis.com/auth/gmail.modify",
-    "https://www.googleapis.com/auth/gmail.send",
-  ],
-  subject: config.gmail.impersonatedUser,
-});
+const auth = new google.auth.JWT(buildGmailAuthOptions(config));
 const gmail = google.gmail({ version: "v1", auth });
 const mailbox = new GmailMailbox(gmail as unknown as GmailApi, config.gmail.impersonatedUser);
 
