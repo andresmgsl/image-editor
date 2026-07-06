@@ -82,5 +82,8 @@ always reproducible. To build locally without pushing: `npm run docker:build`.
 - **Repeated `Poll cycle failed …` with a 403/401:** the service account isn't
   delegated for the two scopes, or `GMAIL_IMPERSONATED_USER` is wrong. Fix the
   Admin Console domain-wide delegation.
+- **`npm run release` errored right after "Pushing…":** the image built and
+  pushed fine; only the Coolify deploy webhook failed. The new image is in the
+  registry — just retry the webhook or hit "Redeploy" in Coolify.
 - **Logs:** watch them in Coolify; on start you should see
   `Email image editor started as <user>. Polling every <n>s.`
