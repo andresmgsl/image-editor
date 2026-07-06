@@ -1,0 +1,14 @@
+node_modules
+dist
+.processed
+.env
+.env.*
+.git
+.gitignore
+docs
+test
+.superpowers
+.claude
+*.md
+Dockerfile
+.dockerignore

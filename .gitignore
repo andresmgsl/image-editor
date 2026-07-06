@@ -1,8 +1,10 @@
 .env
 .env.*
 !.env.example
+!.env.release.example
 node_modules/
 dist/
 *.log
 .processed/
 service-account*.json
+.env.release
