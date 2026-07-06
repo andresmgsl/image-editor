@@ -52,7 +52,8 @@
       "Bash(echo \"TSC_EXIT=$?\")",
       "Bash(/home/andres/.claude/plugins/cache/claude-plugins-official/superpowers/6.1.1/skills/subagent-driven-development/scripts/review-package a0f1d95 *)",
       "Bash(echo \"EXIT: $?\")",
-      "Bash(echo \"TSC EXIT: $?\")"
+      "Bash(echo \"TSC EXIT: $?\")",
+      "Bash(git branch *)"
     ]
   }
 }
