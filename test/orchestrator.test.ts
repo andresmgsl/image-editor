@@ -6,7 +6,7 @@ import type { AppConfig } from "../src/config.js";
 
 const config: AppConfig = {
   anthropicApiKey: "a", falKey: "f",
-  gmail: { impersonatedUser: "images@lafamilia.so", serviceAccountKeyFile: "/keys/sa.json" },
+  gmail: { user: "images@lafamilia.so", oauthClientId: "cid", oauthClientSecret: "secret", oauthRefreshToken: "1//rt" },
   allowlist: ["alice@example.com"], pollIntervalSeconds: 15,
 };
 

@@ -22,7 +22,7 @@ Gmail inbox ──poll (Gmail API)──▶ interpret (Claude) ──▶ generat
 Each unread message from an allowlisted sender flows through:
 
 1. **Mailbox** (`src/mailbox.ts`) — reads unread inbox mail via the **Gmail API**
-   (service account with domain-wide delegation), parses it, and later sends the
+   (OAuth 2.0, signed in as the mailbox itself), parses it, and later sends the
    reply in-thread and marks the message read.
 2. **Interpreter** (`src/interpreter.ts`) — sends the email text (and whether an
    image is attached) to **Claude** (`claude-opus-4-8`, forced tool-use). Claude
@@ -64,22 +64,28 @@ Claude picks the best model per request from `src/catalog.ts`:
 - **Node.js 20+**
 - An **Anthropic API key** (Claude routing)
 - A **Fal.ai API key** (image models)
-- A **Google Workspace** inbox + admin access, with a **service account** set up
-  for Gmail access (see below)
+- A **Google** account for the inbox and an **OAuth 2.0 client** for Gmail access
+  (see below)
 
 ### One-time Google setup
 
-The service authenticates to Gmail as a service account impersonating the inbox —
-no password, no OAuth refresh token.
+The service authenticates to Gmail with a standard **OAuth 2.0 refresh token** —
+it signs in directly as the mailbox. No service account and **no domain-wide
+delegation**, so its access is scoped to this one mailbox only.
 
-1. In **Google Cloud Console**: create/pick a project, **enable the Gmail API**,
-   create a **service account**, and download its **JSON key**.
-2. On the service account, note its **Client ID** and enable domain-wide delegation.
-3. In the **Workspace Admin Console → Security → API controls → Domain-wide
-   delegation**, authorize that Client ID for exactly these scopes:
+1. In **Google Cloud Console**: create/pick a project and **enable the Gmail API**.
+2. **APIs & Services → OAuth consent screen** — set it to **Internal** (Workspace)
+   so refresh tokens don't expire, and add these scopes:
    - `https://www.googleapis.com/auth/gmail.modify`
    - `https://www.googleapis.com/auth/gmail.send`
-4. Choose the mailbox it acts as (e.g. `images@lafamilia.so`).
+3. **APIs & Services → Credentials → Create credentials → OAuth client ID →
+   Desktop app.** Download its JSON (holds the client id + secret).
+4. Get a refresh token for the mailbox — from the project root:
+   ```bash
+   node scripts/get-refresh-token.mjs ~/Downloads/oauth-client.json
+   ```
+   Open the printed URL, **sign in as the mailbox account** (e.g.
+   `images@lafamilia.so`) and approve. It prints `GOOGLE_OAUTH_REFRESH_TOKEN=…`.
 
 ---
 
@@ -91,14 +97,16 @@ cp .env.example .env      # then fill it in (see below)
 npm run dev               # runs with tsx, watches the inbox
 ```
 
-For local dev, point at the downloaded key **file**:
+Fill in `.env` with the client id/secret and the refresh token from the setup above:
 
 ```dotenv
 # .env
 ANTHROPIC_API_KEY=sk-ant-...
 FAL_KEY=...
-GMAIL_IMPERSONATED_USER=images@lafamilia.so
-GOOGLE_SERVICE_ACCOUNT_KEY_FILE=./service-account.json   # path to the JSON key
+GMAIL_USER=images@lafamilia.so
+GOOGLE_OAUTH_CLIENT_ID=...apps.googleusercontent.com
+GOOGLE_OAUTH_CLIENT_SECRET=...
+GOOGLE_OAUTH_REFRESH_TOKEN=1//...
 ALLOWLIST=you@lafamilia.so,teammate@lafamilia.so
 POLL_INTERVAL_SECONDS=15
 ```
@@ -106,7 +114,7 @@ POLL_INTERVAL_SECONDS=15
 On start you should see `Email image editor started as images@lafamilia.so.
 Polling every 15s.` Email the inbox from an allowlisted address and watch it reply.
 
-> `service-account.json` and `.env*` are git-ignored — never commit secrets.
+> `.env*` is git-ignored — never commit secrets.
 
 ### Environment variables
 
@@ -114,15 +122,12 @@ Polling every 15s.` Email the inbox from an allowlisted address and watch it rep
 |---|---|---|
 | `ANTHROPIC_API_KEY` | yes | Claude routing |
 | `FAL_KEY` | yes | Fal.ai image models |
-| `GMAIL_IMPERSONATED_USER` | yes | Mailbox the service account acts as |
-| `GOOGLE_SERVICE_ACCOUNT_KEY` | prod | The full service-account key **JSON, inline** (used in the container) |
-| `GOOGLE_SERVICE_ACCOUNT_KEY_FILE` | local | Path to the key JSON (used in local dev) |
+| `GMAIL_USER` | yes | The mailbox the app signs in as |
+| `GOOGLE_OAUTH_CLIENT_ID` | yes | OAuth 2.0 Desktop-app client id |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | yes | OAuth 2.0 client secret |
+| `GOOGLE_OAUTH_REFRESH_TOKEN` | yes | From `scripts/get-refresh-token.mjs` |
 | `ALLOWLIST` | yes | Comma-separated allowed sender addresses |
 | `POLL_INTERVAL_SECONDS` | no | Default 15 |
-
-Set **exactly one** of `GOOGLE_SERVICE_ACCOUNT_KEY` (inline) or
-`GOOGLE_SERVICE_ACCOUNT_KEY_FILE` (path) — the app errors on startup if neither or
-both are set.
 
 ### Scripts
 
@@ -165,7 +170,7 @@ webhook is set) tells Coolify to pull and restart. It refuses a dirty git tree s
 sha tag always matches what's pushed.
 
 In Coolify, the resource is a **Docker Image** with: the env vars above
-(`GOOGLE_SERVICE_ACCOUNT_KEY` holds the pasted key JSON), **no ports / no HTTP
+(the three `GOOGLE_OAUTH_*` values plus `GMAIL_USER`), **no ports / no HTTP
 health check** (it's a worker), a restart policy, and a **persistent volume at
 `/app/.processed`** for the dedup/retry state.
 
@@ -180,7 +185,7 @@ the local image smoke test, the env-var reference, and troubleshooting.
 src/
   index.ts         entrypoint / wiring (auth, deps, start the loop)
   config.ts        env → typed AppConfig, allowlist
-  google-auth.ts   build the Gmail service-account JWT options
+  google-auth.ts   validate the Gmail OAuth 2.0 credentials
   mailbox.ts       Gmail API read/send/mark-read + email parsing
   interpreter.ts   Claude → structured routing decision
   catalog.ts       Fal.ai model catalog (edit this to add models)
@@ -204,7 +209,10 @@ docs/superpowers/  design specs + implementation plans (how this was built)
   SPF/DKIM verification, so a spoofed allowlisted `From` could trigger API spend.
   Acceptable for an internal team tool; revisit if the inbox is widely known.
 - **Secrets** come from env vars / `.env` (never committed). In production the
-  service-account key lives in a Coolify env var, not a file in the image.
+  OAuth client secret and refresh token live in Coolify env vars, not in the image.
+- **Gmail access is scoped to the single mailbox** — the OAuth refresh token grants
+  only `gmail.modify` + `gmail.send` for `GMAIL_USER`, with no domain-wide
+  delegation, so a leaked token can't reach other Workspace accounts.
 
 ---
 

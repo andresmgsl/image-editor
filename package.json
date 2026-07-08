@@ -6,6 +6,7 @@
   "scripts": {
     "test": "vitest run",
     "dev": "tsx src/index.ts",
+    "auth": "node scripts/get-refresh-token.mjs",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
     "docker:build": "docker build -t email-image-editor:local .",

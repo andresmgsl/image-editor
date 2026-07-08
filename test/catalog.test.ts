@@ -9,6 +9,20 @@ describe("catalog", () => {
     expect(modelsForTask("edit").length).toBeGreaterThan(0);
   });
 
+  it("every edit model declares which image field its Fal endpoint requires", () => {
+    for (const m of modelsForTask("edit")) {
+      expect(m.imageInput, `${m.id} must declare imageInput`).toMatch(/^image_urls?$/);
+    }
+  });
+
+  it("uses the Fal-verified image field per edit endpoint", () => {
+    // Verified live against fal.ai on 2026-07-08 (422 required-field probe).
+    expect(getModel("nano-banana-pro-edit")?.imageInput).toBe("image_urls");
+    expect(getModel("seedream-edit")?.imageInput).toBe("image_urls");
+    expect(getModel("flux-kontext-max")?.imageInput).toBe("image_url");
+    expect(getModel("qwen-image-edit")?.imageInput).toBe("image_url");
+  });
+
   it("looks up and validates choices by id + task", () => {
     const gen = modelsForTask("generate")[0];
     expect(getModel(gen.id)?.id).toBe(gen.id);

@@ -3,17 +3,21 @@ import { loadConfig, isAllowed } from "../src/config.js";
 
 const base = {
   ANTHROPIC_API_KEY: "a", FAL_KEY: "f",
-  GMAIL_IMPERSONATED_USER: "images@lafamilia.so",
-  GOOGLE_SERVICE_ACCOUNT_KEY_FILE: "/keys/sa.json",
+  GMAIL_USER: "images@lafamilia.so",
+  GOOGLE_OAUTH_CLIENT_ID: "cid.apps.googleusercontent.com",
+  GOOGLE_OAUTH_CLIENT_SECRET: "csecret",
+  GOOGLE_OAUTH_REFRESH_TOKEN: "1//refresh",
   ALLOWLIST: "Alice@Example.com, bob@example.com",
 };
 
 describe("loadConfig", () => {
-  it("parses gmail config, allowlist (lowercased), and default poll interval", () => {
+  it("parses gmail OAuth config, allowlist (lowercased), and default poll interval", () => {
     const c = loadConfig(base as NodeJS.ProcessEnv);
     expect(c.anthropicApiKey).toBe("a");
-    expect(c.gmail.impersonatedUser).toBe("images@lafamilia.so");
-    expect(c.gmail.serviceAccountKeyFile).toBe("/keys/sa.json");
+    expect(c.gmail.user).toBe("images@lafamilia.so");
+    expect(c.gmail.oauthClientId).toBe("cid.apps.googleusercontent.com");
+    expect(c.gmail.oauthClientSecret).toBe("csecret");
+    expect(c.gmail.oauthRefreshToken).toBe("1//refresh");
     expect(c.allowlist).toEqual(["alice@example.com", "bob@example.com"]);
     expect(c.pollIntervalSeconds).toBe(15);
   });
@@ -28,27 +32,24 @@ describe("loadConfig", () => {
     expect(c.pollIntervalSeconds).toBe(30);
   });
 
-  it("throws on a missing required var", () => {
-    const { GMAIL_IMPERSONATED_USER, ...rest } = base;
-    expect(() => loadConfig(rest as NodeJS.ProcessEnv)).toThrow(/GMAIL_IMPERSONATED_USER/);
+  it("throws on a missing GMAIL_USER", () => {
+    const { GMAIL_USER, ...rest } = base;
+    expect(() => loadConfig(rest as NodeJS.ProcessEnv)).toThrow(/GMAIL_USER/);
   });
 
-  it("accepts an inline service-account key instead of a file", () => {
-    const { GOOGLE_SERVICE_ACCOUNT_KEY_FILE, ...rest } = base;
-    const c = loadConfig({ ...rest, GOOGLE_SERVICE_ACCOUNT_KEY: '{"client_email":"x","private_key":"y"}' } as NodeJS.ProcessEnv);
-    expect(c.gmail.serviceAccountKey).toBe('{"client_email":"x","private_key":"y"}');
-    expect(c.gmail.serviceAccountKeyFile).toBeUndefined();
+  it("throws on a missing GOOGLE_OAUTH_CLIENT_ID", () => {
+    const { GOOGLE_OAUTH_CLIENT_ID, ...rest } = base;
+    expect(() => loadConfig(rest as NodeJS.ProcessEnv)).toThrow(/GOOGLE_OAUTH_CLIENT_ID/);
   });
 
-  it("throws when neither SA-key var is set", () => {
-    const { GOOGLE_SERVICE_ACCOUNT_KEY_FILE, ...rest } = base;
-    expect(() => loadConfig(rest as NodeJS.ProcessEnv)).toThrow(/GOOGLE_SERVICE_ACCOUNT_KEY/);
+  it("throws on a missing GOOGLE_OAUTH_CLIENT_SECRET", () => {
+    const { GOOGLE_OAUTH_CLIENT_SECRET, ...rest } = base;
+    expect(() => loadConfig(rest as NodeJS.ProcessEnv)).toThrow(/GOOGLE_OAUTH_CLIENT_SECRET/);
   });
 
-  it("throws when both SA-key vars are set", () => {
-    expect(() =>
-      loadConfig({ ...base, GOOGLE_SERVICE_ACCOUNT_KEY: '{"client_email":"x","private_key":"y"}' } as NodeJS.ProcessEnv),
-    ).toThrow(/only one/);
+  it("throws on a missing GOOGLE_OAUTH_REFRESH_TOKEN", () => {
+    const { GOOGLE_OAUTH_REFRESH_TOKEN, ...rest } = base;
+    expect(() => loadConfig(rest as NodeJS.ProcessEnv)).toThrow(/GOOGLE_OAUTH_REFRESH_TOKEN/);
   });
 });
 

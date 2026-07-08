@@ -12,9 +12,11 @@ to a registry, and Coolify runs it. Day-to-day: **edit code → `npm run release
 3. **Release config:** `cp .env.release.example .env.release` and set
    `DOCKER_IMAGE` (e.g. `ghcr.io/lafamilia/email-image-editor`). Optionally set
    `COOLIFY_DEPLOY_WEBHOOK` (from the Coolify resource → Webhooks) to auto-redeploy.
-4. **Google:** you already have a service account with domain-wide delegation for
-   `gmail.modify` + `gmail.send` (see the Gmail auth design). Keep its JSON key —
-   you'll paste it into Coolify.
+4. **Google:** create an OAuth 2.0 **Desktop app** client (APIs & Services →
+   Credentials), set the consent screen to **Internal** with scopes `gmail.modify`
+   + `gmail.send`, then run `node scripts/get-refresh-token.mjs <client.json>`
+   locally, signing in as the mailbox. Keep the client id/secret and the printed
+   refresh token — you'll paste all three into Coolify.
 
 ## Create the Coolify resource
 
@@ -23,8 +25,10 @@ to a registry, and Coolify runs it. Day-to-day: **edit code → `npm run release
 3. **Environment variables** (Coolify → the resource → Environment):
    - `ANTHROPIC_API_KEY`
    - `FAL_KEY`
-   - `GMAIL_IMPERSONATED_USER` — the inbox to act as (e.g. `images@lafamilia.so`)
-   - `GOOGLE_SERVICE_ACCOUNT_KEY` — paste the ENTIRE service-account JSON
+   - `GMAIL_USER` — the mailbox to act as (e.g. `images@lafamilia.so`)
+   - `GOOGLE_OAUTH_CLIENT_ID`
+   - `GOOGLE_OAUTH_CLIENT_SECRET`
+   - `GOOGLE_OAUTH_REFRESH_TOKEN` — from `scripts/get-refresh-token.mjs`
    - `ALLOWLIST` — comma-separated team emails
    - `POLL_INTERVAL_SECONDS` — e.g. `15`
 4. **No ports / no health check** — it's a worker. Leave ports empty; disable any
@@ -40,8 +44,9 @@ Before the first push, confirm the image boots on any Docker-capable machine:
 docker build -t email-image-editor:smoke .
 CID=$(docker run -d \
   -e ANTHROPIC_API_KEY=x -e FAL_KEY=x \
-  -e GMAIL_IMPERSONATED_USER=test@example.com \
-  -e GOOGLE_SERVICE_ACCOUNT_KEY='{"client_email":"sa@test.iam.gserviceaccount.com","private_key":"-----BEGIN PRIVATE KEY-----\nMIIBVAIBADANBgkq\n-----END PRIVATE KEY-----\n"}' \
+  -e GMAIL_USER=test@example.com \
+  -e GOOGLE_OAUTH_CLIENT_ID=x -e GOOGLE_OAUTH_CLIENT_SECRET=x \
+  -e GOOGLE_OAUTH_REFRESH_TOKEN=x \
   -e ALLOWLIST=me@example.com -e POLL_INTERVAL_SECONDS=5 \
   email-image-editor:smoke)
 sleep 8; docker logs "$CID"; docker inspect -f '{{.State.Running}}' "$CID"; docker rm -f "$CID"
@@ -50,7 +55,7 @@ sleep 8; docker logs "$CID"; docker inspect -f '{{.State.Running}}' "$CID"; dock
 You should see `Email image editor started as test@example.com. Polling every 5s.`
 then a `Poll cycle failed …` line (the fake creds are expected to fail), and the
 container still `Running: true` — proving the image (compiled output, `sharp`,
-config, JWT, poll loop) loads cleanly.
+config, OAuth client, poll loop) loads cleanly.
 
 ## Release (every change)
 
@@ -68,8 +73,10 @@ always reproducible. To build locally without pushing: `npm run docker:build`.
 |---|---|---|
 | `ANTHROPIC_API_KEY` | yes | Claude routing |
 | `FAL_KEY` | yes | Fal.ai image models |
-| `GMAIL_IMPERSONATED_USER` | yes | Mailbox the service account acts as |
-| `GOOGLE_SERVICE_ACCOUNT_KEY` | yes (prod) | Full SA key JSON, inline. Locally you may instead set `GOOGLE_SERVICE_ACCOUNT_KEY_FILE` (path). Exactly one. |
+| `GMAIL_USER` | yes | The mailbox the app signs in as |
+| `GOOGLE_OAUTH_CLIENT_ID` | yes | OAuth 2.0 Desktop-app client id |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | yes | OAuth 2.0 client secret |
+| `GOOGLE_OAUTH_REFRESH_TOKEN` | yes | From `scripts/get-refresh-token.mjs` |
 | `ALLOWLIST` | yes | Comma-separated allowed sender addresses |
 | `POLL_INTERVAL_SECONDS` | no | Defaults to 15 |
 
@@ -77,11 +84,13 @@ always reproducible. To build locally without pushing: `npm run docker:build`.
 
 - **`sharp` load error / "Could not load the sharp module":** the base image must
   be Debian (`node:20-slim`), not Alpine. This repo's Dockerfile already uses it.
-- **Startup error `Set GOOGLE_SERVICE_ACCOUNT_KEY …`:** neither or both key vars
-  set. Provide exactly one (in Coolify, `GOOGLE_SERVICE_ACCOUNT_KEY`).
-- **Repeated `Poll cycle failed …` with a 403/401:** the service account isn't
-  delegated for the two scopes, or `GMAIL_IMPERSONATED_USER` is wrong. Fix the
-  Admin Console domain-wide delegation.
+- **Startup error `Missing required env var: GOOGLE_OAUTH_…`:** one of the OAuth
+  vars is unset. All three (client id, secret, refresh token) plus `GMAIL_USER`
+  are required.
+- **Repeated `Poll cycle failed …` with a 403/401 or `invalid_grant`:** the
+  refresh token was revoked/expired, was minted for a different account than
+  `GMAIL_USER`, or the consent screen is missing the two Gmail scopes. Re-run
+  `scripts/get-refresh-token.mjs` and update `GOOGLE_OAUTH_REFRESH_TOKEN`.
 - **`npm run release` errored right after "Pushing…":** the image built and
   pushed fine; only the Coolify deploy webhook failed. The new image is in the
   registry — just retry the webhook or hit "Redeploy" in Coolify.

@@ -6,6 +6,12 @@ export interface CatalogModel {
   label: string;
   description: string;
   task: TaskType;
+  /**
+   * Which field the Fal endpoint expects the attached image under. Required for
+   * `edit` models (they differ: some want a single `image_url` string, others an
+   * `image_urls` array). Verified live against fal.ai per endpoint.
+   */
+  imageInput?: "image_url" | "image_urls";
 }
 
 export const CATALOG: CatalogModel[] = [
@@ -23,13 +29,18 @@ export const CATALOG: CatalogModel[] = [
   { id: "flux-schnell", endpoint: "fal-ai/flux/schnell", label: "FLUX schnell", task: "generate",
     description: "Fast and cheap. Use for simple or quick requests where speed and cost win." },
   // --- editing (input image + instruction) ---
+  // imageInput verified live against fal.ai on 2026-07-08 (required-field probe).
   { id: "nano-banana-pro-edit", endpoint: "fal-ai/nano-banana-pro/edit", label: "Nano Banana Pro Edit", task: "edit",
+    imageInput: "image_urls",
     description: "Default edit pick. Natural-language edits, text edits, strong subject consistency." },
   { id: "flux-kontext-max", endpoint: "fal-ai/flux-pro/kontext/max", label: "FLUX Pro Kontext Max", task: "edit",
+    imageInput: "image_url",
     description: "Targeted local edits and whole-scene transforms." },
   { id: "seedream-edit", endpoint: "fal-ai/bytedance/seedream/v4/edit", label: "Seedream Edit", task: "edit",
+    imageInput: "image_urls",
     description: "Multi-image and style-consistent edits." },
   { id: "qwen-image-edit", endpoint: "fal-ai/qwen-image-edit", label: "Qwen Image Edit", task: "edit",
+    imageInput: "image_url",
     description: "Multilingual text-in-image edits." },
 ];
 

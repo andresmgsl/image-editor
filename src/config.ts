@@ -1,7 +1,7 @@
 export interface AppConfig {
   anthropicApiKey: string;
   falKey: string;
-  gmail: { impersonatedUser: string; serviceAccountKey?: string; serviceAccountKeyFile?: string };
+  gmail: { user: string; oauthClientId: string; oauthClientSecret: string; oauthRefreshToken: string };
   allowlist: string[];
   pollIntervalSeconds: number;
 }
@@ -13,16 +13,12 @@ function req(env: NodeJS.ProcessEnv, key: string): string {
 }
 
 function loadGmailConfig(env: NodeJS.ProcessEnv): AppConfig["gmail"] {
-  const impersonatedUser = req(env, "GMAIL_IMPERSONATED_USER");
-  const serviceAccountKey = env.GOOGLE_SERVICE_ACCOUNT_KEY?.trim() || undefined;
-  const serviceAccountKeyFile = env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE?.trim() || undefined;
-  if (!serviceAccountKey && !serviceAccountKeyFile) {
-    throw new Error("Set GOOGLE_SERVICE_ACCOUNT_KEY (inline JSON) or GOOGLE_SERVICE_ACCOUNT_KEY_FILE (path)");
-  }
-  if (serviceAccountKey && serviceAccountKeyFile) {
-    throw new Error("Set only one of GOOGLE_SERVICE_ACCOUNT_KEY or GOOGLE_SERVICE_ACCOUNT_KEY_FILE, not both");
-  }
-  return { impersonatedUser, serviceAccountKey, serviceAccountKeyFile };
+  return {
+    user: req(env, "GMAIL_USER"),
+    oauthClientId: req(env, "GOOGLE_OAUTH_CLIENT_ID"),
+    oauthClientSecret: req(env, "GOOGLE_OAUTH_CLIENT_SECRET"),
+    oauthRefreshToken: req(env, "GOOGLE_OAUTH_REFRESH_TOKEN"),
+  };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {

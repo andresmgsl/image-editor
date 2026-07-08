@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { fal } from "@fal-ai/client";
 import { google } from "googleapis";
 import { loadConfig } from "./config.js";
-import { buildGmailAuthOptions } from "./google-auth.js";
+import { buildGmailOAuthConfig } from "./google-auth.js";
 import { GmailMailbox, type GmailApi } from "./mailbox.js";
 import { loadProcessedStore } from "./processed.js";
 import { loadAttemptStore } from "./attempts.js";
@@ -16,9 +16,11 @@ const config = loadConfig(process.env);
 fal.config({ credentials: config.falKey });
 const anthropic = new Anthropic({ apiKey: config.anthropicApiKey });
 
-const auth = new google.auth.JWT(buildGmailAuthOptions(config));
+const oauth = buildGmailOAuthConfig(config);
+const auth = new google.auth.OAuth2(oauth.clientId, oauth.clientSecret);
+auth.setCredentials({ refresh_token: oauth.refreshToken });
 const gmail = google.gmail({ version: "v1", auth });
-const mailbox = new GmailMailbox(gmail as unknown as GmailApi, config.gmail.impersonatedUser);
+const mailbox = new GmailMailbox(gmail as unknown as GmailApi, config.gmail.user);
 
 const processed = loadProcessedStore(".processed/ids.json");
 const attempts = loadAttemptStore(".processed/attempts.json");
@@ -31,7 +33,12 @@ const falAdapter: FalLike = {
   storage: { upload: (data: Buffer) => fal.storage.upload(new Blob([new Uint8Array(data)])) },
 };
 
-const produceImage = async (args: { endpoint: string; prompt: string; inputImage?: Buffer }) => {
+const produceImage = async (args: {
+  endpoint: string;
+  prompt: string;
+  inputImage?: Buffer;
+  imageInput?: "image_url" | "image_urls";
+}) => {
   const url = await runModel(falAdapter, args);
   const full = await downloadImage(url);
   return toLowRes(full);
@@ -47,7 +54,7 @@ const deps: LoopDeps = {
   mailbox,
 };
 
-console.log(`Email image editor started as ${config.gmail.impersonatedUser}. Polling every ${config.pollIntervalSeconds}s.`);
+console.log(`Email image editor started as ${config.gmail.user}. Polling every ${config.pollIntervalSeconds}s.`);
 runLoop(deps, config.pollIntervalSeconds * 1000, () => false).catch((err) => {
   console.error("Fatal loop error:", err);
   process.exit(1);

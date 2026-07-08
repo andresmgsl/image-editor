@@ -17,7 +17,12 @@ export const MAX_INTERPRET_ATTEMPTS = 3;
 export interface OrchestratorDeps {
   config: AppConfig;
   anthropic: AnthropicLike;
-  produceImage: (args: { endpoint: string; prompt: string; inputImage?: Buffer }) => Promise<Buffer>;
+  produceImage: (args: {
+    endpoint: string;
+    prompt: string;
+    inputImage?: Buffer;
+    imageInput?: "image_url" | "image_urls";
+  }) => Promise<Buffer>;
   sendReply: (reply: OutgoingReply) => Promise<void>;
   processed: ProcessedStore;
   attempts: AttemptStore;
@@ -78,6 +83,7 @@ export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps)
       endpoint: model.endpoint,
       prompt: decision.prompt,
       inputImage: decision.task === "edit" ? email.imageAttachment : undefined,
+      imageInput: model.imageInput,
     });
     await deps.sendReply(
       buildReply(email, {
