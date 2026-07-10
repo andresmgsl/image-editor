@@ -14,6 +14,8 @@ export interface CatalogModel {
   imageInput?: "image_url" | "image_urls";
 }
 
+// All endpoint slugs below verified live against fal.ai's queue on 2026-07-10
+// (POST with empty body: a valid slug returns 200/IN_QUEUE, a bad slug 404s).
 export const CATALOG: CatalogModel[] = [
   // --- generation (text -> image) ---
   { id: "nano-banana-pro", endpoint: "fal-ai/nano-banana-pro", label: "Nano Banana Pro", task: "generate",
