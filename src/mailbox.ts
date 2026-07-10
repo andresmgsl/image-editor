@@ -1,6 +1,10 @@
 import { simpleParser } from "mailparser";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
 
+// Inline images below this are almost certainly tracking pixels or spacer/icon
+// graphics, not a picture the user wants edited. Real content easily exceeds it.
+const MIN_INLINE_IMAGE_BYTES = 1024;
+
 export interface IncomingEmail {
   id: string;
   threadId: string;
@@ -26,16 +30,17 @@ export interface OutgoingReply {
 export async function parseIncoming(raw: Buffer, id: string, threadId: string): Promise<IncomingEmail> {
   const p = await simpleParser(raw);
   const from = (p.from?.value?.[0]?.address ?? "").toLowerCase();
-  // Only true file attachments that are images — skip non-images and skip inline
-  // images (signature logos, HTML-embedded pictures) so they can't be mistaken
-  // for the input image the user actually wants edited.
+  // Collect image parts the user meant as content. A real file attachment counts
+  // regardless of size (they deliberately attached it). An inline image (pasted
+  // into the body / HTML-embedded) also counts — that's how many people send a
+  // picture to edit — but only above a tiny threshold, so tracking pixels and
+  // spacer/icon graphics don't get mistaken for the image to edit.
   const imageAttachments = p.attachments
-    .filter(
-      (a) =>
-        (a.contentType ?? "").startsWith("image/") &&
-        a.contentDisposition !== "inline" &&
-        !a.related,
-    )
+    .filter((a) => {
+      if (!(a.contentType ?? "").startsWith("image/")) return false;
+      const isInline = a.contentDisposition === "inline" || a.related === true;
+      return !isInline || (a.content?.length ?? 0) >= MIN_INLINE_IMAGE_BYTES;
+    })
     .map((a) => a.content);
   const references = Array.isArray(p.references) ? p.references.join(" ") : (p.references ?? "");
   return {

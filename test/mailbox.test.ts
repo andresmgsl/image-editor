@@ -50,19 +50,33 @@ describe("parseIncoming", () => {
     expect(e.imageAttachments.map((b) => b.toString())).toEqual(["imgA", "imgB"]);
   });
 
-  it("ignores inline (signature/embedded) images, keeping only true attachments", async () => {
+  it("detects inline (pasted-in-body, not attached) images above the tiny threshold", async () => {
     const raw = await buildRaw({
       from: "alice@example.com",
       to: "bot@example.com",
       subject: "edit this",
-      html: 'Please edit <img src="cid:logo@sig"> — thanks',
+      html: 'Please edit this <img src="cid:photo@x"> — thanks',
       attachments: [
-        { filename: "logo.png", content: Buffer.from("siglogo"), contentType: "image/png", cid: "logo@sig" },
-        { filename: "photo.png", content: Buffer.from("realphoto"), contentType: "image/png" },
+        { filename: "photo.png", content: Buffer.alloc(2048, 9), contentType: "image/png", cid: "photo@x" },
       ],
     });
     const e = await parseIncoming(raw, "m", "t");
-    expect(e.imageAttachments.map((b) => b.toString())).toEqual(["realphoto"]);
+    expect(e.imageAttachments.length).toBe(1);
+    expect(e.imageAttachments[0].length).toBe(2048);
+  });
+
+  it("drops tiny inline tracking-pixel / spacer images", async () => {
+    const raw = await buildRaw({
+      from: "alice@example.com",
+      to: "bot@example.com",
+      subject: "hello",
+      html: 'hi there <img src="cid:pixel@x">',
+      attachments: [
+        { filename: "pixel.gif", content: Buffer.alloc(40, 0), contentType: "image/gif", cid: "pixel@x" },
+      ],
+    });
+    const e = await parseIncoming(raw, "m", "t");
+    expect(e.imageAttachments).toEqual([]);
   });
 });
 
