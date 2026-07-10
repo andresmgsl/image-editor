@@ -14,17 +14,20 @@ export interface CatalogModel {
   imageInput?: "image_url" | "image_urls";
 }
 
-// All endpoint slugs below verified live against fal.ai's queue on 2026-07-10
-// (POST with empty body: a valid slug returns 200/IN_QUEUE, a bad slug 404s).
+// All endpoint slugs below verified live on 2026-07-10 by running an actual
+// generation/edit through @fal-ai/client and confirming an image URL came back.
+// (An empty-body queue POST is NOT a reliable check — the queue accepts unknown
+// paths with 200 and only fails at run time, so several bad slugs were caught
+// only by a real generation.)
 export const CATALOG: CatalogModel[] = [
   // --- generation (text -> image) ---
   { id: "nano-banana-pro", endpoint: "fal-ai/nano-banana-pro", label: "Nano Banana Pro", task: "generate",
     description: "Default quality pick. Complex scenes, best-in-class text and typography rendering." },
-  { id: "flux2-pro", endpoint: "fal-ai/flux-2/pro", label: "FLUX.2 [pro]", task: "generate",
+  { id: "flux2-pro", endpoint: "fal-ai/flux-2-pro", label: "FLUX.2 [pro]", task: "generate",
     description: "Photorealism and general high-fidelity image generation." },
-  { id: "seedream", endpoint: "fal-ai/bytedance/seedream/v4", label: "Seedream V4.5", task: "generate",
+  { id: "seedream", endpoint: "fal-ai/bytedance/seedream/v4/text-to-image", label: "Seedream V4", task: "generate",
     description: "High-aesthetic, stylized and marketing-oriented imagery." },
-  { id: "ideogram-v4", endpoint: "fal-ai/ideogram/v4", label: "Ideogram V4", task: "generate",
+  { id: "ideogram-v3", endpoint: "fal-ai/ideogram/v3", label: "Ideogram V3", task: "generate",
     description: "Best when the request centers on text, logos, posters, or typography." },
   { id: "recraft-v3", endpoint: "fal-ai/recraft-v3", label: "Recraft V3", task: "generate",
     description: "Design, brand, and vector-style output: icons, precise styles." },
