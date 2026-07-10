@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
+import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import { parseIncoming, buildReply } from "../src/mailbox.js";
+
+async function buildRaw(opts: Record<string, unknown>): Promise<Buffer> {
+  const mail = new MailComposer(opts);
+  return await new Promise((resolve, reject) =>
+    mail.compile().build((err: Error | null, msg: Buffer) => (err ? reject(err) : resolve(msg))),
+  );
+}
 
 const rawEmail = Buffer.from(
   [
@@ -23,14 +31,45 @@ describe("parseIncoming", () => {
     expect(e.subject).toBe("make a logo");
     expect(e.text).toBe("A minimalist fox logo, orange.");
     expect(e.messageId).toBe("<abc@mail>");
-    expect(e.imageAttachment).toBeUndefined();
+    expect(e.imageAttachments).toEqual([]);
+  });
+
+  it("collects every image attachment (in order) and ignores non-image files", async () => {
+    const raw = await buildRaw({
+      from: "Alice <alice@example.com>",
+      to: "bot@example.com",
+      subject: "edit these",
+      text: "make it night",
+      attachments: [
+        { filename: "a.png", content: Buffer.from("imgA"), contentType: "image/png" },
+        { filename: "notes.pdf", content: Buffer.from("pdfdata"), contentType: "application/pdf" },
+        { filename: "b.jpg", content: Buffer.from("imgB"), contentType: "image/jpeg" },
+      ],
+    });
+    const e = await parseIncoming(raw, "m", "t");
+    expect(e.imageAttachments.map((b) => b.toString())).toEqual(["imgA", "imgB"]);
+  });
+
+  it("ignores inline (signature/embedded) images, keeping only true attachments", async () => {
+    const raw = await buildRaw({
+      from: "alice@example.com",
+      to: "bot@example.com",
+      subject: "edit this",
+      html: 'Please edit <img src="cid:logo@sig"> — thanks',
+      attachments: [
+        { filename: "logo.png", content: Buffer.from("siglogo"), contentType: "image/png", cid: "logo@sig" },
+        { filename: "photo.png", content: Buffer.from("realphoto"), contentType: "image/png" },
+      ],
+    });
+    const e = await parseIncoming(raw, "m", "t");
+    expect(e.imageAttachments.map((b) => b.toString())).toEqual(["realphoto"]);
   });
 });
 
 describe("buildReply", () => {
   const incoming = {
     id: "m1", threadId: "t1", from: "alice@example.com", subject: "make a logo",
-    text: "", messageId: "<abc@mail>", references: "",
+    text: "", imageAttachments: [], messageId: "<abc@mail>", references: "",
   };
 
   it("builds an in-thread reply with an image attachment and threadId", () => {

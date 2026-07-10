@@ -36,7 +36,7 @@ const falAdapter: FalLike = {
 const produceImage = async (args: {
   endpoint: string;
   prompt: string;
-  inputImage?: Buffer;
+  inputImages?: Buffer[];
   imageInput?: "image_url" | "image_urls";
 }) => {
   const url = await runModel(falAdapter, args);

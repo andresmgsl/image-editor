@@ -20,7 +20,7 @@ export interface OrchestratorDeps {
   produceImage: (args: {
     endpoint: string;
     prompt: string;
-    inputImage?: Buffer;
+    inputImages?: Buffer[];
     imageInput?: "image_url" | "image_urls";
   }) => Promise<Buffer>;
   sendReply: (reply: OutgoingReply) => Promise<void>;
@@ -41,7 +41,7 @@ export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps)
   try {
     rawDecision = await interpret(deps.anthropic, {
       text: instruction,
-      hasImage: !!email.imageAttachment,
+      hasImage: email.imageAttachments.length > 0,
     });
   } catch (err) {
     const attempt = deps.attempts.record(email.id);
@@ -65,7 +65,7 @@ export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps)
   const decision = rawDecision;
 
   const needsClarify =
-    decision.task === "clarify" || (decision.task === "edit" && !email.imageAttachment);
+    decision.task === "clarify" || (decision.task === "edit" && email.imageAttachments.length === 0);
 
   if (needsClarify) {
     const message =
@@ -82,7 +82,7 @@ export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps)
     const image = await deps.produceImage({
       endpoint: model.endpoint,
       prompt: decision.prompt,
-      inputImage: decision.task === "edit" ? email.imageAttachment : undefined,
+      inputImages: decision.task === "edit" ? email.imageAttachments : undefined,
       imageInput: model.imageInput,
     });
     await deps.sendReply(

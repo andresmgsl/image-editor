@@ -9,17 +9,22 @@ export interface FalLike {
 export interface RunArgs {
   endpoint: string;
   prompt: string;
-  inputImage?: Buffer;
+  inputImages?: Buffer[];
   /** Which field the endpoint expects the image under (defaults to image_url). */
   imageInput?: "image_url" | "image_urls";
 }
 
 export async function runModel(fal: FalLike, args: RunArgs): Promise<string> {
   const input: Record<string, unknown> = { prompt: args.prompt };
-  if (args.inputImage) {
-    const uploaded = await fal.storage.upload(args.inputImage);
-    if (args.imageInput === "image_urls") input.image_urls = [uploaded];
-    else input.image_url = uploaded;
+  const images = args.inputImages ?? [];
+  if (images.length > 0) {
+    if (args.imageInput === "image_urls") {
+      // Array models accept every attached image.
+      input.image_urls = await Promise.all(images.map((img) => fal.storage.upload(img)));
+    } else {
+      // Single-image models take only the first attachment.
+      input.image_url = await fal.storage.upload(images[0]);
+    }
   }
   const res = await fal.subscribe(args.endpoint, { input });
   const url = res.data.images?.[0]?.url;

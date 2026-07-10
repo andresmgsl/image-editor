@@ -15,7 +15,7 @@ function anthropicReturning(input: unknown): AnthropicLike {
 }
 
 function baseEmail(over: Partial<IncomingEmail> = {}): IncomingEmail {
-  return { id: "m1", threadId: "t1", from: "alice@example.com", subject: "make a bike", text: "", messageId: "<m>", references: "", ...over };
+  return { id: "m1", threadId: "t1", from: "alice@example.com", subject: "make a bike", text: "", imageAttachments: [], messageId: "<m>", references: "", ...over };
 }
 
 function deps(over: Partial<OrchestratorDeps> = {}): OrchestratorDeps {
@@ -53,9 +53,19 @@ describe("processEmail", () => {
     const d = deps();
     const r = await processEmail(baseEmail(), d);
     expect(r).toBe("generated");
-    expect(d.produceImage).toHaveBeenCalledWith({ endpoint: "fal-ai/flux/schnell", prompt: "a bike", inputImage: undefined });
+    expect(d.produceImage).toHaveBeenCalledWith({ endpoint: "fal-ai/flux/schnell", prompt: "a bike", inputImages: undefined, imageInput: undefined });
     const reply = (d.sendReply as any).mock.calls[0][0];
     expect(reply.image).toBeInstanceOf(Buffer);
+  });
+
+  it("passes every attached image to produceImage for an edit request", async () => {
+    const d = deps({ anthropic: anthropicReturning({ task: "edit", modelId: "seedream-edit", prompt: "blend them" }) });
+    const imgs = [Buffer.from("a"), Buffer.from("b")];
+    const r = await processEmail(baseEmail({ imageAttachments: imgs }), d);
+    expect(r).toBe("generated");
+    expect(d.produceImage).toHaveBeenCalledWith(
+      expect.objectContaining({ endpoint: "fal-ai/bytedance/seedream/v4/edit", inputImages: imgs, imageInput: "image_urls" }),
+    );
   });
 
   it("asks for clarification when an edit is requested with no attached image", async () => {

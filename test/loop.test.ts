@@ -3,7 +3,7 @@ import { runOnce, runLoop, type LoopDeps } from "../src/loop.js";
 import type { IncomingEmail } from "../src/mailbox.js";
 
 function email(id: string): IncomingEmail {
-  return { id, threadId: "t", from: "a@b.com", subject: "s", text: "", messageId: "<m>", references: "" };
+  return { id, threadId: "t", from: "a@b.com", subject: "s", text: "", imageAttachments: [], messageId: "<m>", references: "" };
 }
 
 describe("runOnce", () => {

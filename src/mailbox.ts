@@ -7,7 +7,7 @@ export interface IncomingEmail {
   from: string;
   subject: string;
   text: string;
-  imageAttachment?: Buffer;
+  imageAttachments: Buffer[];
   messageId: string;
   references: string;
 }
@@ -26,7 +26,17 @@ export interface OutgoingReply {
 export async function parseIncoming(raw: Buffer, id: string, threadId: string): Promise<IncomingEmail> {
   const p = await simpleParser(raw);
   const from = (p.from?.value?.[0]?.address ?? "").toLowerCase();
-  const image = p.attachments.find((a) => (a.contentType ?? "").startsWith("image/"));
+  // Only true file attachments that are images — skip non-images and skip inline
+  // images (signature logos, HTML-embedded pictures) so they can't be mistaken
+  // for the input image the user actually wants edited.
+  const imageAttachments = p.attachments
+    .filter(
+      (a) =>
+        (a.contentType ?? "").startsWith("image/") &&
+        a.contentDisposition !== "inline" &&
+        !a.related,
+    )
+    .map((a) => a.content);
   const references = Array.isArray(p.references) ? p.references.join(" ") : (p.references ?? "");
   return {
     id,
@@ -34,7 +44,7 @@ export async function parseIncoming(raw: Buffer, id: string, threadId: string): 
     from,
     subject: p.subject ?? "",
     text: (p.text ?? "").trim(),
-    imageAttachment: image?.content,
+    imageAttachments,
     messageId: p.messageId ?? "",
     references,
   };
