@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { loadConfig, isAllowed } from "../src/config.js";
+import { loadConfig, isAllowed, loadTelegramConfig, isUserAllowed } from "../src/config.js";
 
 const base = {
   ANTHROPIC_API_KEY: "a", FAL_KEY: "f",
@@ -60,8 +60,6 @@ describe("isAllowed", () => {
     expect(isAllowed(c, "stranger@evil.com")).toBe(false);
   });
 });
-
-import { loadTelegramConfig, isUserAllowed } from "../src/config.js";
 
 const tgBase = { ANTHROPIC_API_KEY: "a", FAL_KEY: "f", TELEGRAM_BOT_TOKEN: "123:abc", TELEGRAM_ALLOWLIST: "111, 222" };
 
