@@ -101,4 +101,9 @@ describe("buildReply", () => {
     expect(r.subject).toBe("Re: make a logo");
     expect(r.image).toBeUndefined();
   });
+
+  it("does not double-prefix an uppercase RE: subject", () => {
+    const r = buildReply({ ...incoming, subject: "RE: make a logo" }, { text: "ok" });
+    expect(r.subject).toBe("RE: make a logo");
+  });
 });

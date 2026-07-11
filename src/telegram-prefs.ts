@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
 export interface PrefsStore {
@@ -20,7 +20,9 @@ export function loadPrefsStore(filePath: string): PrefsStore {
     mkdirSync(dirname(filePath), { recursive: true });
     const obj: Record<string, string> = {};
     for (const [k, v] of map) obj[String(k)] = v;
-    writeFileSync(filePath, JSON.stringify(obj));
+    const tmp = `${filePath}.tmp`;
+    writeFileSync(tmp, JSON.stringify(obj));
+    renameSync(tmp, filePath); // atomic
   };
   return {
     get: (userId) => map.get(userId),

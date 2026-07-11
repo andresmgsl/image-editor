@@ -59,7 +59,7 @@ export function buildReply(
   incoming: IncomingEmail,
   opts: { text: string; image?: Buffer; filename?: string },
 ): OutgoingReply {
-  const subject = incoming.subject.startsWith("Re:") ? incoming.subject : `Re: ${incoming.subject}`;
+  const subject = /^re:/i.test(incoming.subject) ? incoming.subject : `Re: ${incoming.subject}`;
   const references = [incoming.references, incoming.messageId].filter(Boolean).join(" ");
   return {
     to: incoming.from,

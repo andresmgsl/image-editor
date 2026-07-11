@@ -96,11 +96,13 @@ describe("processEmail", () => {
 
   it("gives up with an error reply once the interpret attempt cap is reached", async () => {
     const record = vi.fn().mockReturnValue(3);
-    const d = deps({ anthropic: anthropicThrowing(), attempts: { record, clear: vi.fn() } });
+    const clear = vi.fn();
+    const d = deps({ anthropic: anthropicThrowing(), attempts: { record, clear } });
     const r = await processEmail(baseEmail(), d);
     expect(r).toBe("error");
     const reply = (d.sendReply as any).mock.calls[0][0];
     expect(reply.text).toMatch(/couldn't understand|rephrase/i);
     expect(d.processed.add).toHaveBeenCalledWith("m1");
+    expect(clear).toHaveBeenCalledWith("m1"); // counter cleared, not leaked
   });
 });

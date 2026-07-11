@@ -58,6 +58,7 @@ export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps)
         text: "Sorry — I couldn't understand that request after a few tries. Please rephrase it and send it again.",
       }),
     );
+    deps.attempts.clear(email.id); // don't leak the counter now that we're done with this id
     deps.processed.add(email.id);
     return "error";
   }
