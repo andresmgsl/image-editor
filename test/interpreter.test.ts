@@ -36,4 +36,22 @@ describe("interpret", () => {
     const client: AnthropicLike = { messages: { async create() { return { content: [{ type: "text" }] }; } } };
     await expect(interpret(client, { text: "x", hasImage: false })).rejects.toThrow();
   });
+
+  it("retries once and succeeds when the first tool call is malformed", async () => {
+    const inputs = [
+      { task: "generate" }, // missing modelId/prompt → fails validation
+      { task: "generate", modelId: "flux-schnell", prompt: "a red bike" },
+    ];
+    let call = 0;
+    const client: AnthropicLike = {
+      messages: {
+        async create() {
+          return { content: [{ type: "tool_use", name: "decide", input: inputs[call++] }] };
+        },
+      },
+    };
+    const d = await interpret(client, { text: "a red bike", hasImage: false });
+    expect(d).toEqual({ task: "generate", modelId: "flux-schnell", prompt: "a red bike" });
+    expect(call).toBe(2); // retried once
+  });
 });
