@@ -152,7 +152,7 @@ Create `test/telegram-prefs.test.ts`:
 
 ```ts
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { rmSync, existsSync } from "node:fs";
+import { rmSync, existsSync, writeFileSync } from "node:fs";
 import { loadPrefsStore } from "../src/telegram-prefs.js";
 
 const FILE = ".state/test-prefs.json";
@@ -180,8 +180,7 @@ describe("loadPrefsStore", () => {
 
   it("starts empty on a corrupt file", () => {
     loadPrefsStore(FILE).set(1, "flux2-pro");
-    rmSync(FILE);
-    require("node:fs").writeFileSync(FILE, "not json{");
+    writeFileSync(FILE, "not json{");
     expect(loadPrefsStore(FILE).get(1)).toBeUndefined();
   });
 });
