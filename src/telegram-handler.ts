@@ -1,7 +1,10 @@
 import { interpret, type AnthropicLike } from "./interpreter.js";
-import { CATALOG, getModel, isValidChoice, type TaskType } from "./catalog.js";
+import { CATALOG, getModel, isValidChoice } from "./catalog.js";
 import type { TgUpdate, TelegramApi } from "./telegram-client.js";
 import type { PrefsStore } from "./telegram-prefs.js";
+
+// Telegram caption limit; see https://core.telegram.org/bots/api#sendphoto
+const MAX_CAPTION_CHARS = 1024;
 
 export interface ProduceImageArgs {
   endpoint: string;
@@ -96,31 +99,38 @@ export async function handleUpdate(update: TgUpdate, deps: HandlerDeps): Promise
   let modelId = decision.modelId;
   let note = "";
   if (pinned) {
-    if (isValidChoice(pinned, decision.task as TaskType)) modelId = pinned;
+    if (isValidChoice(pinned, decision.task)) modelId = pinned;
     else note = ` (pinned ${pinned} can't ${decision.task} — used auto)`;
   }
   const model = getModel(modelId)!;
 
   const started = Date.now();
+  const logSuffix = () =>
+    `user=${userId} task=${decision.task} model=${model.id} pinned=${pinned ?? "auto"} ` +
+    `prompt=${JSON.stringify(decision.prompt)}`;
+
+  let image: Buffer;
   try {
     let inputImages: Buffer[] | undefined;
     if (decision.task === "edit" && photo) {
       inputImages = [await deps.telegram.getFileBuffer(photo.file_id)];
     }
-    const image = await deps.produceImage({
+    image = await deps.produceImage({
       endpoint: model.endpoint,
       prompt: decision.prompt,
       inputImages,
       imageInput: model.imageInput,
     });
-    const emoji = decision.task === "edit" ? "✏️" : "🎨";
-    await deps.telegram.sendPhoto(chatId, image, `${emoji} ${model.label} · ${decision.prompt}${note}`);
-    console.log(
-      `user=${userId} task=${decision.task} model=${model.id} pinned=${pinned ?? "auto"} ` +
-        `prompt=${JSON.stringify(decision.prompt)} ok ${((Date.now() - started) / 1000).toFixed(1)}s`,
-    );
   } catch (err) {
-    console.error(`user=${userId} generation failed:`, err);
+    console.error(`${logSuffix()} err ${((Date.now() - started) / 1000).toFixed(1)}s`, err);
     await deps.telegram.sendMessage(chatId, "Sorry — that request failed to generate. Please try again.");
+    return;
   }
+
+  const emoji = decision.task === "edit" ? "✏️" : "🎨";
+  const caption = `${emoji} ${model.label} · ${decision.prompt}${note}`.slice(0, MAX_CAPTION_CHARS);
+  // Outside the try/catch above: a sendPhoto failure (e.g. malformed caption) is not a
+  // "failed to generate" — the image was already produced. Let it propagate to the caller.
+  await deps.telegram.sendPhoto(chatId, image, caption);
+  console.log(`${logSuffix()} ok ${((Date.now() - started) / 1000).toFixed(1)}s`);
 }

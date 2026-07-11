@@ -131,4 +131,25 @@ describe("handleUpdate — generation", () => {
     await handleUpdate(textUpdate("a bike"), d);
     expect(d.telegram.sendMessage).toHaveBeenCalledWith(500, expect.stringMatching(/failed/i));
   });
+
+  it("truncates an overlong caption to Telegram's 1024-char limit", async () => {
+    const longPrompt = "a".repeat(2000);
+    const d = deps({ anthropic: anthropicReturning({ task: "generate", modelId: "flux-schnell", prompt: longPrompt }) });
+    await handleUpdate(textUpdate("draw something"), d);
+    const caption = (d.telegram.sendPhoto as any).mock.calls[0][2];
+    expect(caption.length).toBeLessThanOrEqual(1024);
+  });
+
+  it("does not mislabel a sendPhoto failure as a generation failure", async () => {
+    const d = deps({
+      telegram: {
+        getUpdates: vi.fn(),
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+        sendPhoto: vi.fn().mockRejectedValue(new Error("caption too long")),
+        getFileBuffer: vi.fn().mockResolvedValue(Buffer.from("img")),
+      },
+    });
+    await expect(handleUpdate(textUpdate("a bike"), d)).rejects.toThrow("caption too long");
+    expect(d.telegram.sendMessage).not.toHaveBeenCalledWith(500, expect.stringMatching(/failed to generate/i));
+  });
 });
