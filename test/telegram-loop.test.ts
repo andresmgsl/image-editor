@@ -1,0 +1,38 @@
+import { describe, it, expect, vi } from "vitest";
+import { runTelegramLoop } from "../src/telegram-loop.js";
+import type { HandlerDeps } from "../src/telegram-handler.js";
+import type { TgUpdate } from "../src/telegram-client.js";
+
+function depsWith(getUpdates: any): HandlerDeps {
+  return {
+    telegram: { getUpdates, sendMessage: vi.fn(), sendPhoto: vi.fn(), getFileBuffer: vi.fn() },
+    anthropic: { messages: { create: vi.fn() } }, produceImage: vi.fn(),
+    allowlist: [111], prefs: { get: () => undefined, set: () => {} },
+  };
+}
+
+const u = (id: number): TgUpdate => ({ update_id: id, message: { message_id: id, from: { id: 111 }, chat: { id: 1 }, text: "hi" } });
+
+describe("runTelegramLoop", () => {
+  it("processes each update once and advances the offset past the last update_id", async () => {
+    const getUpdates = vi.fn()
+      .mockResolvedValueOnce([u(10), u(11)])
+      .mockResolvedValue([]);
+    const d = depsWith(getUpdates);
+    const handle = vi.fn().mockResolvedValue(undefined);
+    let calls = 0;
+    await runTelegramLoop(d, () => ++calls > 2, 0, handle);
+    expect(handle).toHaveBeenCalledTimes(2);
+    // second getUpdates call uses offset = 12 (11 + 1)
+    expect(getUpdates.mock.calls[1][0]).toBe(12);
+  });
+
+  it("keeps going when a handler throws", async () => {
+    const getUpdates = vi.fn().mockResolvedValueOnce([u(10), u(11)]).mockResolvedValue([]);
+    const d = depsWith(getUpdates);
+    const handle = vi.fn().mockRejectedValueOnce(new Error("boom")).mockResolvedValue(undefined);
+    let calls = 0;
+    await runTelegramLoop(d, () => ++calls > 2, 0, handle);
+    expect(handle).toHaveBeenCalledTimes(2);
+  });
+});
