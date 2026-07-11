@@ -40,3 +40,37 @@ function parsePollInterval(raw: string | undefined): number {
 export function isAllowed(config: AppConfig, sender: string): boolean {
   return config.allowlist.includes(sender.trim().toLowerCase());
 }
+
+export interface TelegramConfig {
+  anthropicApiKey: string;
+  falKey: string;
+  botToken: string;
+  allowlist: number[];
+}
+
+function parseUserIds(raw: string | undefined): number[] {
+  const ids = (raw ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => {
+      const n = Number(s);
+      if (!Number.isInteger(n)) throw new Error(`Invalid TELEGRAM_ALLOWLIST id: ${s}`);
+      return n;
+    });
+  if (ids.length === 0) throw new Error("TELEGRAM_ALLOWLIST must list at least one numeric user id");
+  return ids;
+}
+
+export function loadTelegramConfig(env: NodeJS.ProcessEnv): TelegramConfig {
+  return {
+    anthropicApiKey: req(env, "ANTHROPIC_API_KEY"),
+    falKey: req(env, "FAL_KEY"),
+    botToken: req(env, "TELEGRAM_BOT_TOKEN"),
+    allowlist: parseUserIds(env.TELEGRAM_ALLOWLIST),
+  };
+}
+
+export function isUserAllowed(config: { allowlist: number[] }, userId: number): boolean {
+  return config.allowlist.includes(userId);
+}

@@ -34,7 +34,7 @@ const DECIDE_TOOL = {
 function systemPrompt(): string {
   const lines = CATALOG.map((m) => `- ${m.id} (${m.task}): ${m.description}`).join("\n");
   return [
-    "You route image-creation and image-editing requests sent by email.",
+    "You route image-creation and image-editing requests from users.",
     "Decide whether the request is a text-to-image generation, an edit of an attached image, or too unclear to act on.",
     "Pick the single best model from this catalog by its id, and write a clean, specific prompt for that model.",
     "If an image is attached, prefer an 'edit' model; if none is attached, you cannot edit, so use 'generate' or 'clarify'.",
