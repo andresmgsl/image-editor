@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { handleUpdate, type HandlerDeps } from "../src/telegram-handler.js";
+import { handleUpdate, truncateCaption, type HandlerDeps } from "../src/telegram-handler.js";
 import type { TgUpdate } from "../src/telegram-client.js";
 import type { PrefsStore } from "../src/telegram-prefs.js";
 
@@ -151,5 +151,79 @@ describe("handleUpdate — generation", () => {
     });
     await expect(handleUpdate(textUpdate("a bike"), d)).rejects.toThrow("caption too long");
     expect(d.telegram.sendMessage).not.toHaveBeenCalledWith(500, expect.stringMatching(/failed to generate/i));
+  });
+});
+
+function docUpdate(caption: string, opts: { mime?: string; size?: number } = {}, userId = 111): TgUpdate {
+  return {
+    update_id: 5,
+    message: {
+      message_id: 5, from: { id: userId }, chat: { id: 500 }, caption,
+      document: { file_id: "D1", mime_type: opts.mime ?? "image/png", file_size: opts.size ?? 1000 },
+    },
+  };
+}
+
+describe("handleUpdate — input handling", () => {
+  it("edits an image sent as a document (file), not just as a photo", async () => {
+    const d = deps({ anthropic: anthropicReturning({ task: "edit", modelId: "nano-banana-pro-edit", prompt: "night" }) });
+    await handleUpdate(docUpdate("make it night"), d);
+    expect(d.telegram.getFileBuffer).toHaveBeenCalledWith("D1");
+    expect(d.produceImage).toHaveBeenCalledWith(expect.objectContaining({ endpoint: "fal-ai/nano-banana-pro/edit" }));
+  });
+
+  it("rejects an over-large image document with guidance and does not generate", async () => {
+    const d = deps();
+    await handleUpdate(docUpdate("edit this", { size: 25 * 1024 * 1024 }), d);
+    expect(d.telegram.sendMessage).toHaveBeenCalledWith(500, expect.stringMatching(/too large|20 ?MB/i));
+    expect(d.produceImage).not.toHaveBeenCalled();
+  });
+
+  it("ignores a non-image document (treats the caption as a generate request)", async () => {
+    const d = deps();
+    await handleUpdate(docUpdate("a poster", { mime: "application/pdf" }), d);
+    expect(d.telegram.getFileBuffer).not.toHaveBeenCalled();
+    expect(d.produceImage).toHaveBeenCalled();
+  });
+
+  it("replies with help on an empty message (no text, no image) without calling Claude", async () => {
+    const d = deps();
+    await handleUpdate({ update_id: 6, message: { message_id: 6, from: { id: 111 }, chat: { id: 500 } } }, d);
+    expect(d.telegram.sendMessage).toHaveBeenCalledWith(500, expect.stringContaining("/models"));
+    expect(d.produceImage).not.toHaveBeenCalled();
+  });
+
+  it("clarifies when Claude returns edit but no image was attached", async () => {
+    const d = deps({ anthropic: anthropicReturning({ task: "edit", modelId: "nano-banana-pro-edit", prompt: "remove bg" }) });
+    await handleUpdate(textUpdate("remove the background from the photo"), d);
+    expect(d.produceImage).not.toHaveBeenCalled();
+    expect(d.telegram.sendMessage).toHaveBeenCalledWith(500, expect.stringMatching(/none was attached|no image|attach/i));
+  });
+});
+
+describe("handleUpdate — command normalization", () => {
+  it("strips @botname and is case-insensitive on commands and model ids", async () => {
+    const prefs = fakePrefs();
+    const d = deps({ prefs });
+    await handleUpdate(textUpdate("/Model@image_creator_bot Flux2-Pro"), d);
+    expect(prefs.get(111)).toBe("flux2-pro");
+  });
+});
+
+describe("truncateCaption", () => {
+  it("keeps captions within 1024 UTF-16 units", () => {
+    expect(truncateCaption("a".repeat(2000)).length).toBe(1024);
+  });
+
+  it("does not split an emoji surrogate pair", () => {
+    const out = truncateCaption("😀".repeat(600)); // 1200 UTF-16 units
+    expect(out.length).toBeLessThanOrEqual(1024);
+    const lastUnit = out.charCodeAt(out.length - 1);
+    expect(lastUnit >= 0xd800 && lastUnit <= 0xdbff).toBe(false); // no dangling high surrogate
+    expect(out).toBe("😀".repeat(512));
+  });
+
+  it("returns short captions unchanged", () => {
+    expect(truncateCaption("hello")).toBe("hello");
   });
 });

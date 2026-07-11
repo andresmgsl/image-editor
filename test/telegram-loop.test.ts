@@ -36,6 +36,17 @@ describe("runTelegramLoop", () => {
     expect(handle).toHaveBeenCalledTimes(2);
   });
 
+  it("loads the starting offset from the store and persists it after each batch", async () => {
+    let stored = 5;
+    const offsetStore = { get: () => stored, set: (o: number) => { stored = o; } };
+    const getUpdates = vi.fn().mockResolvedValueOnce([u(10), u(11)]).mockResolvedValue([]);
+    const d = depsWith(getUpdates);
+    let calls = 0;
+    await runTelegramLoop(d, () => ++calls > 2, 0, vi.fn().mockResolvedValue(undefined), offsetStore);
+    expect(getUpdates.mock.calls[0][0]).toBe(5); // started from the persisted offset
+    expect(stored).toBe(12); // persisted the advanced offset after the batch
+  });
+
   it("keeps going when getUpdates rejects, retrying instead of throwing", async () => {
     vi.useFakeTimers();
     try {

@@ -4,6 +4,7 @@ import { fal } from "@fal-ai/client";
 import { loadTelegramConfig } from "./config.js";
 import { TelegramClient } from "./telegram-client.js";
 import { loadPrefsStore } from "./telegram-prefs.js";
+import { loadOffsetStore } from "./telegram-offset.js";
 import { runModel, type FalLike } from "./fal-runner.js";
 import { downloadImage, toLowRes } from "./image.js";
 import { runTelegramLoop } from "./telegram-loop.js";
@@ -13,6 +14,8 @@ fal.config({ credentials: config.falKey });
 const anthropic = new Anthropic({ apiKey: config.anthropicApiKey });
 const telegram = new TelegramClient(config.botToken);
 const prefs = loadPrefsStore(".state/telegram-prefs.json");
+// Persist the poll offset so a restart/redeploy doesn't re-deliver handled updates.
+const offsetStore = loadOffsetStore(".state/telegram-offset.json");
 
 const falAdapter: FalLike = {
   subscribe: (endpoint, opts) => fal.subscribe(endpoint, opts) as ReturnType<FalLike["subscribe"]>,
@@ -34,4 +37,7 @@ console.log("Telegram image bot started. Long-polling for updates.");
 await runTelegramLoop(
   { telegram, anthropic, produceImage, allowlist: config.allowlist, prefs },
   () => false,
+  30,
+  undefined,
+  offsetStore,
 );
