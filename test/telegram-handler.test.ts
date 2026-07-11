@@ -69,3 +69,66 @@ describe("handleUpdate — access & commands", () => {
     expect(d.telegram.sendMessage).toHaveBeenCalledWith(500, expect.stringContaining("111"));
   });
 });
+
+function photoUpdate(caption: string, userId = 111): TgUpdate {
+  return { update_id: 2, message: { message_id: 2, from: { id: userId }, chat: { id: 500 }, caption, photo: [{ file_id: "F1", width: 100, height: 100 }] } };
+}
+function anthropicReturning(input: unknown) {
+  return { messages: { async create() { return { content: [{ type: "tool_use", name: "decide", input }] }; } } };
+}
+
+describe("handleUpdate — generation", () => {
+  it("generates from a text message and captions with model + prompt", async () => {
+    const d = deps();
+    await handleUpdate(textUpdate("a bike"), d);
+    expect(d.produceImage).toHaveBeenCalledWith(expect.objectContaining({ endpoint: "fal-ai/flux/schnell", prompt: "a bike" }));
+    const [chatId, image, caption] = (d.telegram.sendPhoto as any).mock.calls[0];
+    expect(chatId).toBe(500);
+    expect(image).toBeInstanceOf(Buffer);
+    expect(caption).toContain("FLUX schnell");
+    expect(caption).toContain("a bike");
+  });
+
+  it("edits a photo+caption, downloading the file and passing one input image", async () => {
+    const d = deps({ anthropic: anthropicReturning({ task: "edit", modelId: "nano-banana-pro-edit", prompt: "make it night" }) });
+    await handleUpdate(photoUpdate("make it night"), d);
+    expect(d.telegram.getFileBuffer).toHaveBeenCalledWith("F1");
+    expect(d.produceImage).toHaveBeenCalledWith(expect.objectContaining({
+      endpoint: "fal-ai/nano-banana-pro/edit", imageInput: "image_urls", inputImages: [Buffer.from("img")],
+    }));
+  });
+
+  it("uses a pinned valid model over the auto pick", async () => {
+    const d = deps({ prefs: fakePrefs({ 111: "recraft-v3" }) });
+    await handleUpdate(textUpdate("a bike"), d);
+    expect(d.produceImage).toHaveBeenCalledWith(expect.objectContaining({ endpoint: "fal-ai/recraft-v3" }));
+  });
+
+  it("falls back to auto and notes it when the pinned model can't do the task", async () => {
+    const d = deps({ anthropic: anthropicReturning({ task: "edit", modelId: "nano-banana-pro-edit", prompt: "night" }), prefs: fakePrefs({ 111: "flux-schnell" }) });
+    await handleUpdate(photoUpdate("night"), d);
+    expect(d.produceImage).toHaveBeenCalledWith(expect.objectContaining({ endpoint: "fal-ai/nano-banana-pro/edit" }));
+    const caption = (d.telegram.sendPhoto as any).mock.calls[0][2];
+    expect(caption).toMatch(/used auto/i);
+  });
+
+  it("prompts for a caption when a photo has none", async () => {
+    const d = deps();
+    await handleUpdate({ update_id: 3, message: { message_id: 3, from: { id: 111 }, chat: { id: 500 }, photo: [{ file_id: "F1", width: 10, height: 10 }] } }, d);
+    expect(d.telegram.sendMessage).toHaveBeenCalledWith(500, expect.stringContaining("caption"));
+    expect(d.produceImage).not.toHaveBeenCalled();
+  });
+
+  it("replies the clarify question and does not generate", async () => {
+    const d = deps({ anthropic: anthropicReturning({ task: "clarify", message: "What should I create?" }) });
+    await handleUpdate(textUpdate("hmm"), d);
+    expect(d.telegram.sendMessage).toHaveBeenCalledWith(500, "What should I create?");
+    expect(d.produceImage).not.toHaveBeenCalled();
+  });
+
+  it("sends a friendly error when generation throws", async () => {
+    const d = deps({ produceImage: vi.fn().mockRejectedValue(new Error("boom")) });
+    await handleUpdate(textUpdate("a bike"), d);
+    expect(d.telegram.sendMessage).toHaveBeenCalledWith(500, expect.stringMatching(/failed/i));
+  });
+});

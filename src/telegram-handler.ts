@@ -1,5 +1,5 @@
 import { interpret, type AnthropicLike } from "./interpreter.js";
-import { CATALOG, getModel } from "./catalog.js";
+import { CATALOG, getModel, isValidChoice, type TaskType } from "./catalog.js";
 import type { TgUpdate, TelegramApi } from "./telegram-client.js";
 import type { PrefsStore } from "./telegram-prefs.js";
 
@@ -72,5 +72,55 @@ export async function handleUpdate(update: TgUpdate, deps: HandlerDeps): Promise
     await handleCommand(cmd, args.join(" ").trim(), userId, chatId, deps);
     return;
   }
-  // Generation/edit path added in Task 5.
+  const photo = msg.photo && msg.photo.length > 0 ? msg.photo[msg.photo.length - 1] : undefined;
+  if (photo && !rawText) {
+    await deps.telegram.sendMessage(chatId, "Add a caption describing the edit.");
+    return;
+  }
+
+  let decision;
+  try {
+    decision = await interpret(deps.anthropic, { text: rawText, hasImage: !!photo });
+  } catch (err) {
+    console.error(`user=${userId} interpret failed:`, err);
+    await deps.telegram.sendMessage(chatId, "Sorry — I couldn't understand that. Please rephrase and try again.");
+    return;
+  }
+
+  if (decision.task === "clarify") {
+    await deps.telegram.sendMessage(chatId, decision.message);
+    return;
+  }
+
+  const pinned = deps.prefs.get(userId);
+  let modelId = decision.modelId;
+  let note = "";
+  if (pinned) {
+    if (isValidChoice(pinned, decision.task as TaskType)) modelId = pinned;
+    else note = ` (pinned ${pinned} can't ${decision.task} — used auto)`;
+  }
+  const model = getModel(modelId)!;
+
+  const started = Date.now();
+  try {
+    let inputImages: Buffer[] | undefined;
+    if (decision.task === "edit" && photo) {
+      inputImages = [await deps.telegram.getFileBuffer(photo.file_id)];
+    }
+    const image = await deps.produceImage({
+      endpoint: model.endpoint,
+      prompt: decision.prompt,
+      inputImages,
+      imageInput: model.imageInput,
+    });
+    const emoji = decision.task === "edit" ? "✏️" : "🎨";
+    await deps.telegram.sendPhoto(chatId, image, `${emoji} ${model.label} · ${decision.prompt}${note}`);
+    console.log(
+      `user=${userId} task=${decision.task} model=${model.id} pinned=${pinned ?? "auto"} ` +
+        `prompt=${JSON.stringify(decision.prompt)} ok ${((Date.now() - started) / 1000).toFixed(1)}s`,
+    );
+  } catch (err) {
+    console.error(`user=${userId} generation failed:`, err);
+    await deps.telegram.sendMessage(chatId, "Sorry — that request failed to generate. Please try again.");
+  }
 }
