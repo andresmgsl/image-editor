@@ -30,4 +30,16 @@ describe("loadPrefsStore", () => {
     writeFileSync(FILE, "not json{");
     expect(loadPrefsStore(FILE).get(1)).toBeUndefined();
   });
+
+  it("keeps per-user values separate, including after a reload", () => {
+    const s = loadPrefsStore(FILE);
+    s.set(1, "flux2-pro");
+    s.set(2, "recraft-v3");
+    expect(s.get(1)).toBe("flux2-pro");
+    expect(s.get(2)).toBe("recraft-v3");
+
+    const reloaded = loadPrefsStore(FILE);
+    expect(reloaded.get(1)).toBe("flux2-pro");
+    expect(reloaded.get(2)).toBe("recraft-v3");
+  });
 });
