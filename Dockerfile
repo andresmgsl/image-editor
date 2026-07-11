@@ -18,4 +18,4 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=builder /app/dist ./dist
 # State dir for the file-backed dedup/retry stores (Coolify mounts a volume here).
 RUN mkdir -p /app/.processed
-CMD ["node", "dist/index.js"]
+CMD ["node", "dist/telegram-index.js"]
