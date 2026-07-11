@@ -12,6 +12,9 @@ import { downloadImage, toLowRes } from "./image.js";
 import { runLoop, type LoopDeps } from "./loop.js";
 
 const config = loadConfig(process.env);
+if (config.allowlist.length === 0) {
+  throw new Error("ALLOWLIST is empty — the email bot would silently ignore all mail. Set ALLOWLIST.");
+}
 
 fal.config({ credentials: config.falKey });
 const anthropic = new Anthropic({ apiKey: config.anthropicApiKey });

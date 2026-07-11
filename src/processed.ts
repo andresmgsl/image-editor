@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
 export interface ProcessedStore {
@@ -18,7 +18,9 @@ export function loadProcessedStore(filePath: string): ProcessedStore {
   }
   const persist = () => {
     mkdirSync(dirname(filePath), { recursive: true });
-    writeFileSync(filePath, JSON.stringify([...set]));
+    const tmp = `${filePath}.tmp`;
+    writeFileSync(tmp, JSON.stringify([...set]));
+    renameSync(tmp, filePath); // atomic: a crash mid-write can't truncate the live file
   };
   return {
     has: (id) => set.has(id),

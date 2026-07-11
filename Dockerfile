@@ -16,6 +16,8 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=builder /app/dist ./dist
-# State dir for the file-backed per-user model preferences store (Coolify mounts a volume here).
-RUN mkdir -p /app/.state
+# State dir for the file-backed stores (per-user model prefs + poll offset).
+# Coolify mounts a persistent volume here; the non-root `node` user must own it.
+RUN mkdir -p /app/.state && chown -R node:node /app
+USER node
 CMD ["node", "dist/telegram-index.js"]

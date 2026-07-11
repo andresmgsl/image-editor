@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
 export interface AttemptStore {
@@ -22,7 +22,9 @@ export function loadAttemptStore(filePath: string): AttemptStore {
     mkdirSync(dirname(filePath), { recursive: true });
     const obj: Record<string, number> = {};
     for (const [k, v] of counts) obj[k] = v;
-    writeFileSync(filePath, JSON.stringify(obj));
+    const tmp = `${filePath}.tmp`;
+    writeFileSync(tmp, JSON.stringify(obj));
+    renameSync(tmp, filePath); // atomic
   };
   return {
     record: (id) => {
