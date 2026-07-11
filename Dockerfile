@@ -16,6 +16,6 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=builder /app/dist ./dist
-# State dir for the file-backed dedup/retry stores (Coolify mounts a volume here).
-RUN mkdir -p /app/.processed
+# State dir for the file-backed per-user model preferences store (Coolify mounts a volume here).
+RUN mkdir -p /app/.state
 CMD ["node", "dist/telegram-index.js"]
