@@ -35,4 +35,21 @@ describe("runTelegramLoop", () => {
     await runTelegramLoop(d, () => ++calls > 2, 0, handle);
     expect(handle).toHaveBeenCalledTimes(2);
   });
+
+  it("keeps going when getUpdates rejects, retrying instead of throwing", async () => {
+    vi.useFakeTimers();
+    try {
+      const getUpdates = vi.fn().mockRejectedValueOnce(new Error("network down")).mockResolvedValue([]);
+      const d = depsWith(getUpdates);
+      const handle = vi.fn().mockResolvedValue(undefined);
+      let calls = 0;
+      const done = runTelegramLoop(d, () => ++calls > 2, 0, handle);
+      await vi.runAllTimersAsync();
+      await done;
+      expect(getUpdates).toHaveBeenCalledTimes(2);
+      expect(handle).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
