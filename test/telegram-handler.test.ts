@@ -372,4 +372,40 @@ describe("handleUpdate — references", () => {
       expect.stringMatching(/reference|couldn't find|not found/i),
     );
   });
+
+  it("proceeds with the attached photo when an edit names an unresolved reference", async () => {
+    const d = deps({
+      anthropic: {
+        messages: {
+          async create() {
+            return {
+              content: [
+                {
+                  type: "tool_use",
+                  name: "decide",
+                  input: {
+                    task: "edit",
+                    modelId: "nano-banana-pro-edit",
+                    prompt: "put me next to andres",
+                    references: ["unknown"],
+                  },
+                },
+              ],
+            };
+          },
+        },
+      },
+      library: { entries: [], resolveImages: () => [] }, // empty library — reference resolves to nothing
+    });
+    await handleUpdate(photoUpdate("put me next to andres"), d);
+    // The attached photo carries the edit; the request is satisfiable, so proceed.
+    expect(d.produceImage).toHaveBeenCalledWith(
+      expect.objectContaining({ endpoint: "fal-ai/nano-banana-pro/edit", inputImages: [Buffer.from("img")] }),
+    );
+    // Not blocked with a "reference not found" clarify.
+    expect(d.telegram.sendMessage).not.toHaveBeenCalledWith(
+      500,
+      expect.stringMatching(/reference|couldn't find|not found/i),
+    );
+  });
 });

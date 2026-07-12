@@ -90,9 +90,9 @@ export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps)
     return "clarified";
   }
 
-  if (decision.references.length > 0 && refImages.length === 0) {
-    // Named references were requested but none resolved — don't silently
-    // generate unrelated content; tell the user instead.
+  if (decision.references.length > 0 && refImages.length === 0 && email.imageAttachments.length === 0) {
+    // Named references were requested, none resolved, and there's no attached
+    // image to fall back on — don't silently generate unrelated content.
     await deps.sendReply(
       buildReply(email, {
         text: "I couldn't find the reference(s) you mentioned, so I didn't generate anything. Please check the name, or attach the image directly.",
@@ -117,9 +117,15 @@ export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps)
     });
     const dropNote =
       resolved.droppedCount > 0 ? ` (capped at 8 images; dropped ${resolved.droppedCount})` : "";
+    // A user image is present but the named reference didn't resolve — note it
+    // rather than silently dropping the reference.
+    const refNote =
+      decision.references.length > 0 && refImages.length === 0
+        ? " (couldn't find the named reference — used your attached image)"
+        : "";
     await deps.sendReply(
       buildReply(email, {
-        text: `Done — created with ${model.label}${resolved.overrideNote}${dropNote}.\nPrompt: ${decision.prompt}`,
+        text: `Done — created with ${model.label}${resolved.overrideNote}${dropNote}${refNote}.\nPrompt: ${decision.prompt}`,
         image,
         filename: "result.jpg",
       }),

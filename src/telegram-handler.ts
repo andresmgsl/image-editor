@@ -180,9 +180,9 @@ export async function handleUpdate(update: TgUpdate, deps: HandlerDeps): Promise
     return;
   }
 
-  if (decision.references.length > 0 && refImages.length === 0) {
-    // Named references were requested but none resolved — don't silently
-    // generate unrelated content; tell the user instead.
+  if (decision.references.length > 0 && refImages.length === 0 && !imageFileId) {
+    // Named references were requested, none resolved, and there's no attached
+    // image to fall back on — don't silently generate unrelated content.
     await deps.telegram.sendMessage(
       chatId,
       "I couldn't find the reference(s) you mentioned, so I didn't generate anything — check the name, or attach the image directly.",
@@ -193,6 +193,11 @@ export async function handleUpdate(update: TgUpdate, deps: HandlerDeps): Promise
   const pinned = deps.prefs.get(userId);
   let modelId = decision.modelId;
   let note = "";
+  if (decision.references.length > 0 && refImages.length === 0) {
+    // A user image is present, so the request is still satisfiable — proceed
+    // with the attachment, but don't silently drop the unresolved reference.
+    note += " (couldn't find the named reference — used your attached image)";
+  }
   if (pinned) {
     if (isValidChoice(pinned, decision.task)) modelId = pinned;
     else note = ` (pinned ${pinned} can't ${decision.task} — used auto)`;

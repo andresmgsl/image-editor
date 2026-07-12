@@ -140,6 +140,25 @@ describe("processEmail", () => {
     expect(reply.text).toMatch(/reference|couldn't find|not found/i);
   });
 
+  it("proceeds with the attached image when an edit names an unresolved reference", async () => {
+    const imgs = [Buffer.from("a")];
+    const d = deps({
+      anthropic: anthropicReturning({
+        task: "edit",
+        modelId: "nano-banana-pro-edit",
+        prompt: "put me next to andres",
+        references: ["unknown"],
+      }),
+      library: { entries: [], resolveImages: () => [] }, // empty library — reference resolves to nothing
+    });
+    const r = await processEmail(baseEmail({ imageAttachments: imgs }), d);
+    // The attached image carries the edit; the request is satisfiable, so proceed.
+    expect(r).toBe("generated");
+    expect(d.produceImage).toHaveBeenCalledWith(
+      expect.objectContaining({ endpoint: "fal-ai/nano-banana-pro/edit", inputImages: imgs }),
+    );
+  });
+
   it("replies with an error message when generation throws", async () => {
     const d = deps({ produceImage: vi.fn().mockRejectedValue(new Error("boom")) });
     const r = await processEmail(baseEmail(), d);
