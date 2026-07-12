@@ -232,7 +232,23 @@ export async function handleUpdate(update: TgUpdate, deps: HandlerDeps): Promise
 
   const emoji = decision.task === "edit" ? "✏️" : "🎨";
   const caption = truncateCaption(`${emoji} ${model.label} · ${decision.prompt}${note}`);
-  await deps.telegram.sendPhoto(chatId, image, caption);
+  try {
+    await deps.telegram.sendPhoto(chatId, image, caption);
+  } catch (err) {
+    // Delivery failed after a paid, successful generation — don't go fully silent.
+    // Try a different endpoint (sendMessage) once; if that also fails, the original
+    // sendPhoto error still propagates so the loop logs it (intentionally NOT
+    // mislabeled as a generation failure — see the regression test for that).
+    try {
+      await deps.telegram.sendMessage(
+        chatId,
+        "I generated your image but couldn't deliver it — please try again",
+      );
+    } catch {
+      // fallback also failed; fall through to rethrow the original error below.
+    }
+    throw err;
+  }
   console.log(
     `user=${userId} task=${decision.task} model=${model.id} pinned=${pinned ?? "auto"} ` +
       `refs=${JSON.stringify(decision.references)} ok ${((Date.now() - started) / 1000).toFixed(1)}s`,

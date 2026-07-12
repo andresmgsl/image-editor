@@ -37,10 +37,21 @@ const produceImage = async (args: {
   return toLowRes(full);
 };
 
+// Graceful shutdown: flip a mutable flag on SIGTERM/SIGINT (e.g. a Coolify redeploy)
+// so the loop drains its current cycle and exits cleanly instead of being killed
+// mid-batch (which would otherwise interact with offset persistence — see telegram-loop.ts).
+let shouldStop = false;
+process.on("SIGTERM", () => {
+  shouldStop = true;
+});
+process.on("SIGINT", () => {
+  shouldStop = true;
+});
+
 console.log("Telegram image bot started. Long-polling for updates.");
 await runTelegramLoop(
   { telegram, anthropic, produceImage, allowlist: config.allowlist, prefs, library },
-  () => false,
+  () => shouldStop,
   30,
   undefined,
   offsetStore,

@@ -62,8 +62,18 @@ const deps: LoopDeps = {
   library,
 };
 
+// Graceful shutdown: flip a mutable flag on SIGTERM/SIGINT so the loop drains its
+// current poll cycle and exits cleanly instead of being killed mid-flight.
+let shouldStop = false;
+process.on("SIGTERM", () => {
+  shouldStop = true;
+});
+process.on("SIGINT", () => {
+  shouldStop = true;
+});
+
 console.log(`Email image editor started as ${config.gmail.user}. Polling every ${config.pollIntervalSeconds}s.`);
-runLoop(deps, config.pollIntervalSeconds * 1000, () => false).catch((err) => {
+runLoop(deps, config.pollIntervalSeconds * 1000, () => shouldStop).catch((err) => {
   console.error("Fatal loop error:", err);
   process.exit(1);
 });

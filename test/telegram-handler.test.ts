@@ -153,6 +153,32 @@ describe("handleUpdate — generation", () => {
     await expect(handleUpdate(textUpdate("a bike"), d)).rejects.toThrow("caption too long");
     expect(d.telegram.sendMessage).not.toHaveBeenCalledWith(500, expect.stringMatching(/failed to generate/i));
   });
+
+  it("attempts a delivery-failure fallback message when sendPhoto rejects, then still rethrows", async () => {
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    const d = deps({
+      telegram: {
+        getUpdates: vi.fn(),
+        sendMessage,
+        sendPhoto: vi.fn().mockRejectedValue(new Error("network blip")),
+        getFileBuffer: vi.fn().mockResolvedValue(Buffer.from("img")),
+      },
+    });
+    await expect(handleUpdate(textUpdate("a bike"), d)).rejects.toThrow("network blip");
+    expect(sendMessage).toHaveBeenCalledWith(500, expect.stringMatching(/couldn't deliver/i));
+  });
+
+  it("still rethrows the original sendPhoto error even when the fallback sendMessage also fails", async () => {
+    const d = deps({
+      telegram: {
+        getUpdates: vi.fn(),
+        sendMessage: vi.fn().mockRejectedValue(new Error("also down")),
+        sendPhoto: vi.fn().mockRejectedValue(new Error("network blip")),
+        getFileBuffer: vi.fn().mockResolvedValue(Buffer.from("img")),
+      },
+    });
+    await expect(handleUpdate(textUpdate("a bike"), d)).rejects.toThrow("network blip");
+  });
 });
 
 function docUpdate(caption: string, opts: { mime?: string; size?: number } = {}, userId = 111): TgUpdate {
