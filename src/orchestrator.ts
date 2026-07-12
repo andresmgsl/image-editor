@@ -1,9 +1,10 @@
 import { type AppConfig, isAllowed } from "./config.js";
 import { type Decision, type AnthropicLike, interpret } from "./interpreter.js";
-import { getModel } from "./catalog.js";
 import { type IncomingEmail, type OutgoingReply, buildReply } from "./mailbox.js";
 import { type ProcessedStore } from "./processed.js";
 import { type AttemptStore } from "./attempts.js";
+import { resolveGeneration } from "./reference-routing.js";
+import type { ReferenceLibrary } from "./reference-library.js";
 
 export type ProcessResult =
   | "skipped-duplicate"
@@ -26,6 +27,7 @@ export interface OrchestratorDeps {
   sendReply: (reply: OutgoingReply) => Promise<void>;
   processed: ProcessedStore;
   attempts: AttemptStore;
+  library: ReferenceLibrary;
 }
 
 export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps): Promise<ProcessResult> {
@@ -42,6 +44,7 @@ export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps)
     rawDecision = await interpret(deps.anthropic, {
       text: instruction,
       hasImage: email.imageAttachments.length > 0,
+      library: deps.library.entries,
     });
   } catch (err) {
     const attempt = deps.attempts.record(email.id);
@@ -79,16 +82,22 @@ export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps)
   }
 
   try {
-    const model = getModel(decision.modelId)!; // validated in interpret()
+    const refImages = deps.library.resolveImages(decision.references);
+    const resolved = resolveGeneration({
+      chosenModelId: decision.modelId,
+      userImages: email.imageAttachments,
+      refImages,
+    });
+    const model = resolved.model;
     const image = await deps.produceImage({
       endpoint: model.endpoint,
       prompt: decision.prompt,
-      inputImages: decision.task === "edit" ? email.imageAttachments : undefined,
+      inputImages: resolved.images.length ? resolved.images : undefined,
       imageInput: model.imageInput,
     });
     await deps.sendReply(
       buildReply(email, {
-        text: `Done — created with ${model.label}.\nPrompt: ${decision.prompt}`,
+        text: `Done — created with ${model.label}${resolved.overrideNote}.\nPrompt: ${decision.prompt}`,
         image,
         filename: "result.jpg",
       }),
