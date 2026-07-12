@@ -36,7 +36,12 @@ export function loadReferenceLibrary(rootDir: string): ReferenceLibrary {
     return EMPTY;
   }
 
-  const raw = JSON.parse(readFileSync(manifestPath, "utf8"));
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(manifestPath, "utf8"));
+  } catch (err) {
+    throw new Error(`Reference library: failed to read/parse ${manifestPath}: ${(err as Error).message}`);
+  }
   const entries = ManifestSchema.parse(raw) as ReferenceEntry[];
 
   const seen = new Set<string>();

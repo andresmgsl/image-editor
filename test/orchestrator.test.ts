@@ -78,6 +78,19 @@ describe("processEmail", () => {
     expect(d.produceImage).not.toHaveBeenCalled();
   });
 
+  it("generates from references when edit is requested with no attached image", async () => {
+    const refBufs = [Buffer.from("r1")];
+    const d = deps({
+      anthropic: anthropicReturning({ task: "edit", modelId: "nano-banana-pro-edit", prompt: "night", references: ["andres"] }),
+      library: { entries: [], resolveImages: () => refBufs },
+    });
+    const r = await processEmail(baseEmail(), d); // no imageAttachment, but a reference resolves
+    expect(r).toBe("generated");
+    expect(d.produceImage).toHaveBeenCalledWith(
+      expect.objectContaining({ endpoint: "fal-ai/nano-banana-pro/edit", inputImages: refBufs }),
+    );
+  });
+
   it("injects reference images and forces an array-image model", async () => {
     const refBufs = [Buffer.from("r1"), Buffer.from("r2")];
     const d = deps({

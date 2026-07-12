@@ -163,7 +163,7 @@ export async function handleUpdate(update: TgUpdate, deps: HandlerDeps): Promise
     return;
   }
 
-  if (decision.task === "edit" && !imageFileId) {
+  if (decision.task === "edit" && !imageFileId && decision.references.length === 0) {
     // Claude asked to edit but the user attached no image — guide them instead of 422-ing fal.
     await deps.telegram.sendMessage(
       chatId,
@@ -191,6 +191,7 @@ export async function handleUpdate(update: TgUpdate, deps: HandlerDeps): Promise
     const resolved = resolveGeneration({ chosenModelId: modelId, userImages, refImages });
     model = resolved.model;
     note += resolved.overrideNote;
+    if (resolved.droppedCount > 0) note += ` (capped at 8 images; dropped ${resolved.droppedCount})`;
     image = await deps.produceImage({
       endpoint: model.endpoint,
       prompt: decision.prompt,

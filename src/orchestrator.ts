@@ -69,7 +69,8 @@ export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps)
   const decision = rawDecision;
 
   const needsClarify =
-    decision.task === "clarify" || (decision.task === "edit" && email.imageAttachments.length === 0);
+    decision.task === "clarify" ||
+    (decision.task === "edit" && email.imageAttachments.length === 0 && decision.references.length === 0);
 
   if (needsClarify) {
     const message =
@@ -95,9 +96,11 @@ export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps)
       inputImages: resolved.images.length ? resolved.images : undefined,
       imageInput: model.imageInput,
     });
+    const dropNote =
+      resolved.droppedCount > 0 ? ` (capped at 8 images; dropped ${resolved.droppedCount})` : "";
     await deps.sendReply(
       buildReply(email, {
-        text: `Done — created with ${model.label}${resolved.overrideNote}.\nPrompt: ${decision.prompt}`,
+        text: `Done — created with ${model.label}${resolved.overrideNote}${dropNote}.\nPrompt: ${decision.prompt}`,
         image,
         filename: "result.jpg",
       }),

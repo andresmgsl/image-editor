@@ -272,4 +272,42 @@ describe("handleUpdate — references", () => {
     await handleUpdate(textUpdate("an image of andres"), d);
     expect(d.telegram.getFileBuffer).not.toHaveBeenCalled();
   });
+
+  it("generates from references when Claude says edit but no image was attached", async () => {
+    const refBufs = [Buffer.from("andres1")];
+    const d = deps({
+      anthropic: {
+        messages: {
+          async create() {
+            return {
+              content: [
+                {
+                  type: "tool_use",
+                  name: "decide",
+                  input: { task: "edit", modelId: "nano-banana-pro-edit", prompt: "put andres in a scene", references: ["andres"] },
+                },
+              ],
+            };
+          },
+        },
+      },
+      library: { entries: [], resolveImages: () => refBufs },
+    });
+    await handleUpdate(textUpdate("edit a photo of andres in a park"), d);
+    expect(d.produceImage).toHaveBeenCalledWith(
+      expect.objectContaining({ endpoint: "fal-ai/nano-banana-pro/edit", inputImages: refBufs }),
+    );
+    expect(d.telegram.sendMessage).not.toHaveBeenCalledWith(500, expect.stringMatching(/none was attached|no image|attach/i));
+  });
+
+  it("notes the dropped count in the caption when references push the image count over the cap", async () => {
+    const refBufs = Array.from({ length: 9 }, (_, i) => Buffer.from(`ref${i}`));
+    const d = deps({
+      anthropic: anthropicRef(["andres"]),
+      library: { entries: [], resolveImages: () => refBufs },
+    });
+    await handleUpdate(textUpdate("an image of andres"), d);
+    const caption = (d.telegram.sendPhoto as any).mock.calls[0][2];
+    expect(caption).toMatch(/dropped 1/);
+  });
 });

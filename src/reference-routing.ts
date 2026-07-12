@@ -60,6 +60,6 @@ export function resolveGeneration(args: ResolveGenArgs): ResolvedGen {
   }
 
   const model = defaultMultiReferenceModel();
-  const overrideNote = ` (used ${model.label} — needs input images)`;
+  const overrideNote = ` (auto-switched to a reference-capable model)`;
   return { model, images, overrideNote, droppedCount };
 }

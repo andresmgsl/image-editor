@@ -78,4 +78,27 @@ describe("interpret", () => {
     const d = await interpret(client, { text: "a red bike", hasImage: false });
     if (d.task !== "clarify") expect(d.references).toEqual([]);
   });
+
+  it("renders the reference library into the system prompt sent to the model", async () => {
+    let capturedSystem = "";
+    const client: AnthropicLike = {
+      messages: {
+        async create(args: any) {
+          capturedSystem = args.system;
+          return {
+            content: [
+              { type: "tool_use", name: "decide", input: { task: "generate", modelId: "flux-schnell", prompt: "a red bike" } },
+            ],
+          };
+        },
+      },
+    };
+    await interpret(client, {
+      text: "a red bike",
+      hasImage: false,
+      library: [{ id: "andres", kind: "person", name: "Andrés", aliases: [], description: "", images: ["a.jpg"] }],
+    });
+    expect(capturedSystem).toContain("andres");
+    expect(capturedSystem).toContain("Andrés");
+  });
 });

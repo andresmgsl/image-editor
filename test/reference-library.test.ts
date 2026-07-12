@@ -35,4 +35,8 @@ describe("loadReferenceLibrary", () => {
   it("throws when two entries share an id", () => {
     expect(() => loadReferenceLibrary("test/fixtures/reflib-dup-id")).toThrow(/duplicate id/i);
   });
+
+  it("contextualizes a malformed manifest with the manifest path", () => {
+    expect(() => loadReferenceLibrary("test/fixtures/reflib-bad-json")).toThrow(/failed to read\/parse/);
+  });
 });
