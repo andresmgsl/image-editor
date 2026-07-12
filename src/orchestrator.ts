@@ -3,7 +3,7 @@ import { type Decision, type AnthropicLike, interpret, InterpreterUnavailableErr
 import { type IncomingEmail, type OutgoingReply, buildReply } from "./mailbox.js";
 import { type ProcessedStore } from "./processed.js";
 import { type AttemptStore } from "./attempts.js";
-import { resolveGeneration } from "./reference-routing.js";
+import { resolveGeneration, type ResolvedGen } from "./reference-routing.js";
 import type { ReferenceLibrary } from "./reference-library.js";
 
 export type ProcessResult =
@@ -102,36 +102,28 @@ export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps)
     return "clarified";
   }
 
+  // `produceImage` runs in its own try, separate from the success reply below.
+  // A persistent Gmail-send failure (e.g. a refresh token scoped without
+  // `gmail.send`) must never re-run a paid Opus interpret + fal generation on
+  // every poll forever — so once generation succeeds we mark the message
+  // processed unconditionally, before attempting the reply. If the success
+  // `sendReply` then fails, that failure propagates to the caller (the loop's
+  // generic per-message error log) rather than being mislabeled as a
+  // generation failure.
+  let resolved: ResolvedGen;
+  let image: Buffer;
   try {
-    const resolved = resolveGeneration({
+    resolved = resolveGeneration({
       chosenModelId: decision.modelId,
       userImages: email.imageAttachments,
       refImages,
     });
-    const model = resolved.model;
-    const image = await deps.produceImage({
-      endpoint: model.endpoint,
+    image = await deps.produceImage({
+      endpoint: resolved.model.endpoint,
       prompt: decision.prompt,
       inputImages: resolved.images.length ? resolved.images : undefined,
-      imageInput: model.imageInput,
+      imageInput: resolved.model.imageInput,
     });
-    const dropNote =
-      resolved.droppedCount > 0 ? ` (capped at 8 images; dropped ${resolved.droppedCount})` : "";
-    // A user image is present but the named reference didn't resolve — note it
-    // rather than silently dropping the reference.
-    const refNote =
-      decision.references.length > 0 && refImages.length === 0
-        ? " (couldn't find the named reference — used your attached image)"
-        : "";
-    await deps.sendReply(
-      buildReply(email, {
-        text: `Done — created with ${model.label}${resolved.overrideNote}${dropNote}${refNote}.\nPrompt: ${decision.prompt}`,
-        image,
-        filename: "result.jpg",
-      }),
-    );
-    deps.processed.add(email.id);
-    return "generated";
   } catch (err) {
     console.error(`Generation failed for msg ${email.id}:`, err);
     await deps.sendReply(
@@ -142,4 +134,26 @@ export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps)
     deps.processed.add(email.id);
     return "error";
   }
+
+  const model = resolved.model;
+  const dropNote =
+    resolved.droppedCount > 0 ? ` (capped at 8 images; dropped ${resolved.droppedCount})` : "";
+  // A user image is present but the named reference didn't resolve — note it
+  // rather than silently dropping the reference.
+  const refNote =
+    decision.references.length > 0 && refImages.length === 0
+      ? " (couldn't find the named reference — used your attached image)"
+      : "";
+
+  // Mark processed now — generation succeeded and fal was already paid for —
+  // so a subsequent send failure can't cause an unbounded regenerate loop.
+  deps.processed.add(email.id);
+  await deps.sendReply(
+    buildReply(email, {
+      text: `Done — created with ${model.label}${resolved.overrideNote}${dropNote}${refNote}.\nPrompt: ${decision.prompt}`,
+      image,
+      filename: "result.jpg",
+    }),
+  );
+  return "generated";
 }

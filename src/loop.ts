@@ -19,7 +19,11 @@ export async function runOnce(
       await deps.mailbox.markRead(email.id);
       console.log(`[msg ${email.id}] ${email.from} -> ${result}`);
     } catch (err) {
-      console.error(`[msg ${email.id}] unhandled error:`, err);
+      // Never log the raw error object: gaxios's redactor scrubs Authorization
+      // headers and client_secret/grant_type body params, but NOT the OAuth
+      // refresh_token body param, so a raw GaxiosError could leak the
+      // mailbox's refresh token into logs. Log only the message.
+      console.error(`[msg ${email.id}] unhandled error:`, err instanceof Error ? err.message : String(err));
     }
   }
 }
@@ -34,7 +38,8 @@ export async function runLoop(
     try {
       await once(deps);
     } catch (err) {
-      console.error("Poll cycle failed; will retry next interval:", err);
+      // See the note above: log only the message, never the raw error object.
+      console.error("Poll cycle failed; will retry next interval:", err instanceof Error ? err.message : String(err));
     }
     await new Promise((r) => setTimeout(r, intervalMs));
   }

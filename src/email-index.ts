@@ -74,6 +74,8 @@ process.on("SIGINT", () => {
 
 console.log(`Email image editor started as ${config.gmail.user}. Polling every ${config.pollIntervalSeconds}s.`);
 runLoop(deps, config.pollIntervalSeconds * 1000, () => shouldStop).catch((err) => {
-  console.error("Fatal loop error:", err);
+  // Never log the raw error object here either — see loop.ts's per-cycle
+  // catch for why (gaxios doesn't redact the OAuth refresh_token body param).
+  console.error("Fatal loop error:", err instanceof Error ? err.message : String(err));
   process.exit(1);
 });

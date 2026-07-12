@@ -159,6 +159,20 @@ describe("processEmail", () => {
     );
   });
 
+  it("does not mislabel a sendReply failure as a generation failure, and marks the message processed to prevent an unbounded regenerate loop", async () => {
+    const sendReply = vi.fn().mockRejectedValue(new Error("smtp down"));
+    const d = deps({ sendReply });
+    await expect(processEmail(baseEmail(), d)).rejects.toThrow("smtp down");
+    // Generation succeeded (fal was paid), so the message must be marked
+    // processed regardless of the reply failure — otherwise every poll would
+    // re-run interpret + fal generation forever while Gmail send is broken.
+    expect(d.processed.add).toHaveBeenCalledWith("m1");
+    // Only the success reply was attempted — never the "failed to generate" text.
+    expect(sendReply).toHaveBeenCalledTimes(1);
+    const attemptedReply = sendReply.mock.calls[0][0];
+    expect(attemptedReply.text).not.toMatch(/failed to generate/i);
+  });
+
   it("replies with an error message when generation throws", async () => {
     const d = deps({ produceImage: vi.fn().mockRejectedValue(new Error("boom")) });
     const r = await processEmail(baseEmail(), d);
