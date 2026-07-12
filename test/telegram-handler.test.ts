@@ -133,6 +133,16 @@ describe("handleUpdate — generation", () => {
     expect(d.telegram.sendMessage).toHaveBeenCalledWith(500, expect.stringMatching(/failed/i));
   });
 
+  it("tells the user the service is temporarily unavailable (not 'rephrase') when interpret fails with a transport/API error", async () => {
+    const d = deps({
+      anthropic: { messages: { async create() { throw new Error("529 overloaded_error"); } } },
+    });
+    await handleUpdate(textUpdate("a bike"), d);
+    expect(d.telegram.sendMessage).toHaveBeenCalledWith(500, expect.stringMatching(/unavailable/i));
+    expect(d.telegram.sendMessage).not.toHaveBeenCalledWith(500, expect.stringMatching(/rephrase/i));
+    expect(d.produceImage).not.toHaveBeenCalled();
+  });
+
   it("truncates an overlong caption to Telegram's 1024-char limit", async () => {
     const longPrompt = "a".repeat(2000);
     const d = deps({ anthropic: anthropicReturning({ task: "generate", modelId: "flux-schnell", prompt: longPrompt }) });

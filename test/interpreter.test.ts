@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { interpret, type AnthropicLike } from "../src/interpreter.js";
+import { interpret, InterpreterUnavailableError, type AnthropicLike } from "../src/interpreter.js";
 import { defaultModelFor } from "../src/catalog.js";
 
 function fakeClient(toolInput: unknown): AnthropicLike {
@@ -77,6 +77,53 @@ describe("interpret", () => {
     const client = fakeClient({ task: "generate", modelId: "flux-schnell", prompt: "a red bike" });
     const d = await interpret(client, { text: "a red bike", hasImage: false });
     if (d.task !== "clarify") expect(d.references).toEqual([]);
+  });
+
+  it("wraps a transport/API failure as InterpreterUnavailableError and does not retry", async () => {
+    let calls = 0;
+    const client: AnthropicLike = {
+      messages: {
+        async create() {
+          calls++;
+          throw new Error("529 overloaded_error");
+        },
+      },
+    };
+    await expect(interpret(client, { text: "a red bike", hasImage: false })).rejects.toBeInstanceOf(
+      InterpreterUnavailableError,
+    );
+    expect(calls).toBe(1); // no retry for a transport/API error — distinct from the malformed-response retry path
+  });
+
+  it("still throws a plain (non-Unavailable) error when the tool call is malformed on every attempt", async () => {
+    const client: AnthropicLike = {
+      messages: {
+        async create() {
+          return { content: [{ type: "tool_use", name: "decide", input: { task: "generate" } }] }; // missing modelId/prompt
+        },
+      },
+    };
+    await expect(interpret(client, { text: "x", hasImage: false })).rejects.not.toBeInstanceOf(
+      InterpreterUnavailableError,
+    );
+  });
+
+  it("declares the decide tool as strict", async () => {
+    let capturedTools: any;
+    const client: AnthropicLike = {
+      messages: {
+        async create(args: any) {
+          capturedTools = args.tools;
+          return {
+            content: [
+              { type: "tool_use", name: "decide", input: { task: "generate", modelId: "flux-schnell", prompt: "a red bike" } },
+            ],
+          };
+        },
+      },
+    };
+    await interpret(client, { text: "a red bike", hasImage: false });
+    expect(capturedTools).toEqual([expect.objectContaining({ name: "decide", strict: true })]);
   });
 
   it("renders the reference library into the system prompt sent to the model", async () => {

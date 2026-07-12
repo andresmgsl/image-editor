@@ -1,4 +1,4 @@
-import { interpret, type AnthropicLike } from "./interpreter.js";
+import { interpret, InterpreterUnavailableError, type AnthropicLike } from "./interpreter.js";
 import { CATALOG, getModel, isValidChoice, type CatalogModel } from "./catalog.js";
 import { isUserAllowed } from "./config.js";
 import { resolveGeneration } from "./reference-routing.js";
@@ -156,7 +156,11 @@ export async function handleUpdate(update: TgUpdate, deps: HandlerDeps): Promise
     });
   } catch (err) {
     console.error(`user=${userId} interpret failed:`, err);
-    await deps.telegram.sendMessage(chatId, "Sorry — I couldn't understand that. Please rephrase and try again.");
+    const message =
+      err instanceof InterpreterUnavailableError
+        ? "The image service is temporarily unavailable — please try again in a minute."
+        : "Sorry — I couldn't understand that. Please rephrase and try again.";
+    await deps.telegram.sendMessage(chatId, message);
     return;
   }
 

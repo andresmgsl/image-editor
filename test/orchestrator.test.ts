@@ -176,15 +176,31 @@ describe("processEmail", () => {
     expect(d.processed.add).not.toHaveBeenCalled();
   });
 
-  it("gives up with an error reply once the interpret attempt cap is reached", async () => {
+  it("gives up with a 'temporarily unavailable' reply (not 'rephrase') once the interpret attempt cap is reached on a transport/API error", async () => {
     const record = vi.fn().mockReturnValue(3);
     const clear = vi.fn();
     const d = deps({ anthropic: anthropicThrowing(), attempts: { record, clear } });
     const r = await processEmail(baseEmail(), d);
     expect(r).toBe("error");
     const reply = (d.sendReply as any).mock.calls[0][0];
-    expect(reply.text).toMatch(/couldn't understand|rephrase/i);
+    expect(reply.text).toMatch(/unavailable/i);
+    expect(reply.text).not.toMatch(/rephrase/i);
     expect(d.processed.add).toHaveBeenCalledWith("m1");
     expect(clear).toHaveBeenCalledWith("m1"); // counter cleared, not leaked
+  });
+
+  it("gives up with a 'couldn't understand / rephrase' reply once the cap is reached on a malformed decision (non-transport error)", async () => {
+    const record = vi.fn().mockReturnValue(3);
+    const clear = vi.fn();
+    const malformed: AnthropicLike = {
+      messages: { async create() { return { content: [{ type: "tool_use", name: "decide", input: { task: "generate" } }] }; } },
+    };
+    const d = deps({ anthropic: malformed, attempts: { record, clear } });
+    const r = await processEmail(baseEmail(), d);
+    expect(r).toBe("error");
+    const reply = (d.sendReply as any).mock.calls[0][0];
+    expect(reply.text).toMatch(/couldn't understand|rephrase/i);
+    expect(d.processed.add).toHaveBeenCalledWith("m1");
+    expect(clear).toHaveBeenCalledWith("m1");
   });
 });

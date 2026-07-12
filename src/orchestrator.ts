@@ -1,5 +1,5 @@
 import { type AppConfig, isAllowed } from "./config.js";
-import { type Decision, type AnthropicLike, interpret } from "./interpreter.js";
+import { type Decision, type AnthropicLike, interpret, InterpreterUnavailableError } from "./interpreter.js";
 import { type IncomingEmail, type OutgoingReply, buildReply } from "./mailbox.js";
 import { type ProcessedStore } from "./processed.js";
 import { type AttemptStore } from "./attempts.js";
@@ -56,11 +56,11 @@ export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps)
       throw err; // not marked processed -> retried on the next poll cycle
     }
     console.error(`Interpret failed for msg ${email.id} (gave up after ${attempt} attempts):`, err);
-    await deps.sendReply(
-      buildReply(email, {
-        text: "Sorry — I couldn't understand that request after a few tries. Please rephrase it and send it again.",
-      }),
-    );
+    const text =
+      err instanceof InterpreterUnavailableError
+        ? "Sorry — the image service is temporarily unavailable right now. Please try again in a few minutes."
+        : "Sorry — I couldn't understand that request after a few tries. Please rephrase it and send it again.";
+    await deps.sendReply(buildReply(email, { text }));
     deps.attempts.clear(email.id); // don't leak the counter now that we're done with this id
     deps.processed.add(email.id);
     return "error";
