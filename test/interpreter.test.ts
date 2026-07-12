@@ -108,7 +108,7 @@ describe("interpret", () => {
     );
   });
 
-  it("declares the decide tool as strict", async () => {
+  it("does NOT enable strict tool use on the decide tool (conditional schema can't express it)", async () => {
     let capturedTools: any;
     const client: AnthropicLike = {
       messages: {
@@ -123,7 +123,8 @@ describe("interpret", () => {
       },
     };
     await interpret(client, { text: "a red bike", hasImage: false });
-    expect(capturedTools).toEqual([expect.objectContaining({ name: "decide", strict: true })]);
+    expect(capturedTools[0].name).toBe("decide");
+    expect(capturedTools[0].strict).toBeUndefined();
   });
 
   it("renders the reference library into the system prompt sent to the model", async () => {

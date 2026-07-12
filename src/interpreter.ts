@@ -40,10 +40,13 @@ export class InterpreterUnavailableError extends Error {
   }
 }
 
+// NOTE: strict tool use is intentionally NOT enabled — the decide tool has
+// conditionally-required fields (modelId/prompt for generate/edit, message for
+// clarify) that strict mode's all-required constraint can't express; the Zod
+// safeParse + retry below is the guard instead.
 const DECIDE_TOOL = {
   name: "decide",
   description: "Decide how to handle the image request.",
-  strict: true,
   input_schema: {
     type: "object",
     properties: {
@@ -63,7 +66,6 @@ const DECIDE_TOOL = {
       },
     },
     required: ["task"],
-    additionalProperties: false,
   },
 } as const;
 
