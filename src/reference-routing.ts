@@ -2,6 +2,7 @@ import {
   getModel,
   isArrayImageModel,
   defaultMultiReferenceModel,
+  defaultModelFor,
   type CatalogModel,
 } from "./catalog.js";
 
@@ -31,8 +32,10 @@ export interface ResolvedGen {
  * Turn a chosen model + gathered images into a concrete, image-capable call.
  * With 2+ images the model must accept an `image_urls` array; otherwise it is
  * overridden to the default multi-reference model. With exactly one image any
- * edit model is fine; a text-only model is overridden. With zero images the
- * chosen model is kept as-is (plain text-to-image).
+ * edit model is fine; a text-only model is overridden. With zero images only a
+ * text-to-image model is capable — an edit model has nothing to edit, so it is
+ * overridden to the default generate model instead (never a fal call with no
+ * `image_url(s)`).
  */
 export function resolveGeneration(args: ResolveGenArgs): ResolvedGen {
   let images = [...args.userImages, ...args.refImages];
@@ -50,13 +53,21 @@ export function resolveGeneration(args: ResolveGenArgs): ResolvedGen {
   const capable =
     !!chosen &&
     (count === 0
-      ? true
+      ? !chosen.imageInput // text-to-image only; an edit model needs at least one image
       : count === 1
         ? !!chosen.imageInput // any edit model
         : isArrayImageModel(chosen)); // 2+ needs an array-image model
 
   if (capable) {
     return { model: chosen!, images, overrideNote: "", droppedCount };
+  }
+
+  if (count === 0) {
+    // Never fall back to an edit model with zero images — it would 422 at fal
+    // with no image_url(s). Fall back to the plain text-to-image default.
+    const model = defaultModelFor("generate");
+    const overrideNote = ` (auto-switched to a text-to-image model)`;
+    return { model, images, overrideNote, droppedCount };
   }
 
   const model = defaultMultiReferenceModel();

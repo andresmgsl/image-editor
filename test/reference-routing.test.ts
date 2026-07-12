@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { resolveGeneration, MAX_INJECTED_IMAGES } from "../src/reference-routing.js";
+import { defaultModelFor } from "../src/catalog.js";
 
 const buf = (s: string) => Buffer.from(s);
 
@@ -49,5 +50,16 @@ describe("resolveGeneration", () => {
     const r = resolveGeneration({ chosenModelId: "seedream-edit", userImages: many, refImages: [] });
     expect(r.images.length).toBe(MAX_INJECTED_IMAGES);
     expect(r.droppedCount).toBe(3);
+  });
+
+  it("never keeps an edit model when there are zero images (would 422 with no image)", () => {
+    const r = resolveGeneration({ chosenModelId: "nano-banana-pro-edit", userImages: [], refImages: [] });
+    expect(r.model.imageInput).toBeUndefined();
+    expect(r.model.id).toBe(defaultModelFor("generate").id);
+  });
+
+  it("falls back to the default generate model for an unknown model id with zero images", () => {
+    const r = resolveGeneration({ chosenModelId: "totally-bogus-id", userImages: [], refImages: [] });
+    expect(r.model.id).toBe(defaultModelFor("generate").id);
   });
 });

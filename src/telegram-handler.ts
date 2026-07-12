@@ -165,11 +165,27 @@ export async function handleUpdate(update: TgUpdate, deps: HandlerDeps): Promise
     return;
   }
 
-  if (decision.task === "edit" && !imageFileId && decision.references.length === 0) {
-    // Claude asked to edit but the user attached no image — guide them instead of 422-ing fal.
+  // Gate on resolved images, not reference ids: an unknown/empty-library id
+  // silently resolves to zero images, which would otherwise sail through and
+  // 422 at fal with no image_url(s).
+  const refImages = deps.library.resolveImages(decision.references);
+
+  if (decision.task === "edit" && !imageFileId && refImages.length === 0) {
+    // Claude asked to edit but there's no image to work with — no attachment
+    // and no resolved reference — guide the user instead of 422-ing fal.
     await deps.telegram.sendMessage(
       chatId,
       "It looks like you want to edit an image, but none was attached — send the photo (or image file) with your instruction as its caption.",
+    );
+    return;
+  }
+
+  if (decision.references.length > 0 && refImages.length === 0) {
+    // Named references were requested but none resolved — don't silently
+    // generate unrelated content; tell the user instead.
+    await deps.telegram.sendMessage(
+      chatId,
+      "I couldn't find the reference(s) you mentioned, so I didn't generate anything — check the name, or attach the image directly.",
     );
     return;
   }
@@ -189,7 +205,6 @@ export async function handleUpdate(update: TgUpdate, deps: HandlerDeps): Promise
   try {
     const userImages: Buffer[] = [];
     if (imageFileId) userImages.push(await deps.telegram.getFileBuffer(imageFileId));
-    const refImages = deps.library.resolveImages(decision.references);
     const resolved = resolveGeneration({ chosenModelId: modelId, userImages, refImages });
     model = resolved.model;
     note += resolved.overrideNote;

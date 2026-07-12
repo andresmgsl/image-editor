@@ -108,6 +108,38 @@ describe("processEmail", () => {
     );
   });
 
+  it("clarifies instead of 422-ing when edit names an unknown reference and no image is attached", async () => {
+    const d = deps({
+      anthropic: anthropicReturning({
+        task: "edit",
+        modelId: "nano-banana-pro-edit",
+        prompt: "night",
+        references: ["unknown"],
+      }),
+      library: { entries: [], resolveImages: () => [] }, // unknown id resolves to nothing
+    });
+    const r = await processEmail(baseEmail(), d); // no imageAttachment, unresolved reference
+    expect(r).toBe("clarified");
+    expect(d.produceImage).not.toHaveBeenCalled();
+  });
+
+  it("clarifies instead of silently generating when references resolve to zero images", async () => {
+    const d = deps({
+      anthropic: anthropicReturning({
+        task: "generate",
+        modelId: "nano-banana-pro",
+        prompt: "a scene",
+        references: ["unknown"],
+      }),
+      library: { entries: [], resolveImages: () => [] },
+    });
+    const r = await processEmail(baseEmail(), d);
+    expect(r).toBe("clarified");
+    expect(d.produceImage).not.toHaveBeenCalled();
+    const reply = (d.sendReply as any).mock.calls[0][0];
+    expect(reply.text).toMatch(/reference|couldn't find|not found/i);
+  });
+
   it("replies with an error message when generation throws", async () => {
     const d = deps({ produceImage: vi.fn().mockRejectedValue(new Error("boom")) });
     const r = await processEmail(baseEmail(), d);

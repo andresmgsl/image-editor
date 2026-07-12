@@ -327,4 +327,49 @@ describe("handleUpdate — references", () => {
     const caption = (d.telegram.sendPhoto as any).mock.calls[0][2];
     expect(caption).toMatch(/dropped 1/);
   });
+
+  it("guides the user instead of 422-ing when edit names an unknown reference and no image is attached", async () => {
+    const d = deps({
+      anthropic: {
+        messages: {
+          async create() {
+            return {
+              content: [
+                {
+                  type: "tool_use",
+                  name: "decide",
+                  input: {
+                    task: "edit",
+                    modelId: "nano-banana-pro-edit",
+                    prompt: "make it night",
+                    references: ["unknown"],
+                  },
+                },
+              ],
+            };
+          },
+        },
+      },
+      library: { entries: [], resolveImages: () => [] }, // unknown id resolves to nothing
+    });
+    await handleUpdate(textUpdate("edit the photo of unknown-person to make it night"), d);
+    expect(d.produceImage).not.toHaveBeenCalled();
+    expect(d.telegram.sendMessage).toHaveBeenCalledWith(
+      500,
+      expect.stringMatching(/none was attached|no image|attach|reference/i),
+    );
+  });
+
+  it("clarifies instead of silently generating when a generate task names an unresolved reference", async () => {
+    const d = deps({
+      anthropic: anthropicRef(["unknown"]),
+      library: { entries: [], resolveImages: () => [] },
+    });
+    await handleUpdate(textUpdate("a photo of unknown-person"), d);
+    expect(d.produceImage).not.toHaveBeenCalled();
+    expect(d.telegram.sendMessage).toHaveBeenCalledWith(
+      500,
+      expect.stringMatching(/reference|couldn't find|not found/i),
+    );
+  });
 });
