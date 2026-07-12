@@ -174,6 +174,16 @@ All commands are case-insensitive and work as `/cmd@yourbotname` in groups.
 Every image reply's caption shows what ran: `🎨 <model label> · <prompt>` for
 generations, `✏️ <model label> · <prompt>` for edits.
 
+### Reference assets (people & brand)
+
+The bot can inject known people and La Familia brand images into a generation.
+Add entries under `assets/` (see `assets/README.md`), then name them in a request:
+
+> "create an image of Andrés with the official Familia shirt in a public square"
+
+Named references are auto-injected; requests with 2+ images run on Nano Banana
+Pro Edit (or Seedream Edit). No attachment is required to use references.
+
 ---
 
 ## Environment variables
