@@ -73,8 +73,11 @@ export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps)
   const decision = rawDecision;
 
   if (decision.task === "clarify") {
-    await deps.sendReply(buildReply(email, { text: decision.message }));
+    // Finalize before the reply: the paid interpret was already consumed, so a
+    // persistently broken Gmail send must not leave the message unprocessed
+    // (which would re-run interpret every poll forever).
     deps.processed.add(email.id);
+    await deps.sendReply(buildReply(email, { text: decision.message }));
     return "clarified";
   }
 
@@ -85,24 +88,26 @@ export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps)
 
   if (decision.task === "edit" && email.imageAttachments.length === 0 && refImages.length === 0) {
     // No image to work with — no attachment and no resolved reference.
+    // Finalize before the reply (see the clarify branch above for why).
+    deps.processed.add(email.id);
     await deps.sendReply(
       buildReply(email, {
         text: "It looks like you want to edit an image, but none was attached. Please reply with the image attached and describe the change.",
       }),
     );
-    deps.processed.add(email.id);
     return "clarified";
   }
 
   if (decision.references.length > 0 && refImages.length === 0 && email.imageAttachments.length === 0) {
     // Named references were requested, none resolved, and there's no attached
     // image to fall back on — don't silently generate unrelated content.
+    // Finalize before the reply (see the clarify branch above for why).
+    deps.processed.add(email.id);
     await deps.sendReply(
       buildReply(email, {
         text: "I couldn't find the reference(s) you mentioned, so I didn't generate anything. Please check the name, or attach the image directly.",
       }),
     );
-    deps.processed.add(email.id);
     return "clarified";
   }
 

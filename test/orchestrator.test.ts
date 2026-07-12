@@ -78,6 +78,28 @@ describe("processEmail", () => {
     expect(d.produceImage).not.toHaveBeenCalled();
   });
 
+  it("marks processed even when a clarify reply fails to send (paid interpret already consumed)", async () => {
+    // A clarify decision is reached only after a successful (paid) interpret.
+    // A persistently broken Gmail send must not leave the message unprocessed,
+    // or interpret would re-run every poll forever.
+    const d = deps({
+      anthropic: anthropicReturning({ task: "clarify", message: "which style?" }),
+      sendReply: vi.fn().mockRejectedValue(new Error("smtp down")),
+    });
+    await expect(processEmail(baseEmail(), d)).rejects.toThrow("smtp down");
+    expect(d.processed.add).toHaveBeenCalledWith("m1");
+  });
+
+  it("marks processed even when the edit-with-no-image clarify reply fails to send", async () => {
+    const d = deps({
+      anthropic: anthropicReturning({ task: "edit", modelId: "nano-banana-pro-edit", prompt: "night" }),
+      sendReply: vi.fn().mockRejectedValue(new Error("smtp down")),
+    });
+    await expect(processEmail(baseEmail(), d)).rejects.toThrow("smtp down"); // no imageAttachment
+    expect(d.processed.add).toHaveBeenCalledWith("m1");
+    expect(d.produceImage).not.toHaveBeenCalled();
+  });
+
   it("generates from references when edit is requested with no attached image", async () => {
     const refBufs = [Buffer.from("r1")];
     const d = deps({
