@@ -1,7 +1,7 @@
 import { interpret, InterpreterUnavailableError, type AnthropicLike } from "./interpreter.js";
 import { CATALOG, getModel, isValidChoice, type CatalogModel } from "./catalog.js";
 import { isUserAllowed } from "./config.js";
-import { resolveGeneration } from "./reference-routing.js";
+import { resolveGeneration, MAX_INJECTED_IMAGES } from "./reference-routing.js";
 import type { TgUpdate, TelegramApi } from "./telegram-client.js";
 import type { PrefsStore } from "./telegram-prefs.js";
 import type { ReferenceLibrary } from "./reference-library.js";
@@ -36,13 +36,32 @@ function modelsList(): string {
   return CATALOG.map((m) => `${m.id} — ${m.label} (${m.task}): ${m.description}`).join("\n");
 }
 
-/** Truncate a caption to Telegram's limit without splitting a surrogate pair. */
-export function truncateCaption(s: string): string {
-  if (s.length <= MAX_CAPTION_CHARS) return s;
-  let c = s.slice(0, MAX_CAPTION_CHARS);
+/** Truncate a string to `maxLen` UTF-16 units without splitting a surrogate pair. */
+function truncateSurrogateSafe(s: string, maxLen: number): string {
+  if (s.length <= maxLen) return s;
+  let c = s.slice(0, maxLen);
   const last = c.charCodeAt(c.length - 1);
   if (last >= 0xd800 && last <= 0xdbff) c = c.slice(0, -1); // don't leave a lone high surrogate
   return c;
+}
+
+/** Truncate a caption to Telegram's limit without splitting a surrogate pair. */
+export function truncateCaption(s: string): string {
+  return truncateSurrogateSafe(s, MAX_CAPTION_CHARS);
+}
+
+/**
+ * Build a caption that fits Telegram's limit while keeping the informative
+ * suffix note (e.g. "(auto-switched…)"/"(capped at N images…)") intact: the
+ * prompt is the variable-length part, so it — not the note — absorbs the
+ * truncation when the total would overflow.
+ */
+function buildCaption(prefix: string, prompt: string, note: string): string {
+  const budget = Math.max(0, MAX_CAPTION_CHARS - prefix.length - note.length);
+  const truncatedPrompt = truncateSurrogateSafe(prompt, budget);
+  // Safety net: if prefix+note alone already exceed the limit (degenerate,
+  // shouldn't happen in practice), fall back to the old whole-string cut.
+  return truncateCaption(`${prefix}${truncatedPrompt}${note}`);
 }
 
 type ImageSource =
@@ -217,7 +236,9 @@ export async function handleUpdate(update: TgUpdate, deps: HandlerDeps): Promise
     const resolved = resolveGeneration({ chosenModelId: modelId, userImages, refImages });
     model = resolved.model;
     note += resolved.overrideNote;
-    if (resolved.droppedCount > 0) note += ` (capped at 8 images; dropped ${resolved.droppedCount})`;
+    if (resolved.droppedCount > 0) {
+      note += ` (capped at ${MAX_INJECTED_IMAGES} images; dropped ${resolved.droppedCount})`;
+    }
     image = await deps.produceImage({
       endpoint: model.endpoint,
       prompt: decision.prompt,
@@ -235,7 +256,7 @@ export async function handleUpdate(update: TgUpdate, deps: HandlerDeps): Promise
   }
 
   const emoji = decision.task === "edit" ? "✏️" : "🎨";
-  const caption = truncateCaption(`${emoji} ${model.label} · ${decision.prompt}${note}`);
+  const caption = buildCaption(`${emoji} ${model.label} · `, decision.prompt, note);
   try {
     await deps.telegram.sendPhoto(chatId, image, caption);
   } catch (err) {

@@ -28,7 +28,7 @@ const mailbox = new GmailMailbox(gmail as unknown as GmailApi, config.gmail.user
 
 const processed = loadProcessedStore(".processed/ids.json");
 const attempts = loadAttemptStore(".processed/attempts.json");
-const library = loadReferenceLibrary(process.env.REFERENCE_ASSETS_DIR ?? "assets");
+const library = await loadReferenceLibrary(process.env.REFERENCE_ASSETS_DIR ?? "assets");
 
 // Adapt the real @fal-ai/client to our FalLike interface. The real
 // `fal.storage.upload` expects a Blob, so wrap the Buffer in a Uint8Array.

@@ -3,7 +3,7 @@ import { type Decision, type AnthropicLike, interpret, InterpreterUnavailableErr
 import { type IncomingEmail, type OutgoingReply, buildReply } from "./mailbox.js";
 import { type ProcessedStore } from "./processed.js";
 import { type AttemptStore } from "./attempts.js";
-import { resolveGeneration, type ResolvedGen } from "./reference-routing.js";
+import { resolveGeneration, MAX_INJECTED_IMAGES, type ResolvedGen } from "./reference-routing.js";
 import type { ReferenceLibrary } from "./reference-library.js";
 
 export type ProcessResult =
@@ -150,7 +150,9 @@ export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps)
 
   const model = resolved.model;
   const dropNote =
-    resolved.droppedCount > 0 ? ` (capped at 8 images; dropped ${resolved.droppedCount})` : "";
+    resolved.droppedCount > 0
+      ? ` (capped at ${MAX_INJECTED_IMAGES} images; dropped ${resolved.droppedCount})`
+      : "";
   // A user image is present but the named reference didn't resolve — note it
   // rather than silently dropping the reference.
   const refNote =

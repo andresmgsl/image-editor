@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { handleUpdate, truncateCaption, type HandlerDeps } from "../src/telegram-handler.js";
+import { MAX_INJECTED_IMAGES } from "../src/reference-routing.js";
 import type { TgUpdate } from "../src/telegram-client.js";
 import type { PrefsStore } from "../src/telegram-prefs.js";
 
@@ -149,6 +150,18 @@ describe("handleUpdate — generation", () => {
     await handleUpdate(textUpdate("draw something"), d);
     const caption = (d.telegram.sendPhoto as any).mock.calls[0][2];
     expect(caption.length).toBeLessThanOrEqual(1024);
+  });
+
+  it("truncates the prompt, not the note, so a very long prompt still shows the pinned-model note (M5)", async () => {
+    const longPrompt = "a".repeat(2000);
+    const d = deps({
+      anthropic: anthropicReturning({ task: "edit", modelId: "nano-banana-pro-edit", prompt: longPrompt }),
+      prefs: fakePrefs({ 111: "flux-schnell" }), // pinned model can't edit -> falls back with a note
+    });
+    await handleUpdate(photoUpdate(longPrompt), d);
+    const caption = (d.telegram.sendPhoto as any).mock.calls[0][2];
+    expect(caption.length).toBeLessThanOrEqual(1024);
+    expect(caption).toMatch(/used auto\)$/i); // note survives at the very end, unclipped
   });
 
   it("does not mislabel a sendPhoto failure as a generation failure", async () => {
@@ -362,6 +375,8 @@ describe("handleUpdate — references", () => {
     await handleUpdate(textUpdate("an image of andres"), d);
     const caption = (d.telegram.sendPhoto as any).mock.calls[0][2];
     expect(caption).toMatch(/dropped 1/);
+    // M6: the cap in the copy must track the MAX_INJECTED_IMAGES constant, not a hardcoded literal.
+    expect(caption).toContain(`capped at ${MAX_INJECTED_IMAGES} images`);
   });
 
   it("guides the user instead of 422-ing when edit names an unknown reference and no image is attached", async () => {

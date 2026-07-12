@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { processEmail, type OrchestratorDeps } from "../src/orchestrator.js";
+import { MAX_INJECTED_IMAGES } from "../src/reference-routing.js";
 import type { AnthropicLike } from "../src/interpreter.js";
 import type { IncomingEmail } from "../src/mailbox.js";
 import type { AppConfig } from "../src/config.js";
@@ -128,6 +129,18 @@ describe("processEmail", () => {
         imageInput: "image_urls",
       }),
     );
+  });
+
+  it("reflects the MAX_INJECTED_IMAGES constant in the drop note, not a hardcoded literal (M6)", async () => {
+    const refBufs = Array.from({ length: MAX_INJECTED_IMAGES + 1 }, (_, i) => Buffer.from(`r${i}`));
+    const d = deps({
+      anthropic: anthropicReturning({ task: "generate", modelId: "nano-banana-pro", prompt: "a scene", references: ["andres"] }),
+      library: { entries: [], resolveImages: () => refBufs },
+    });
+    await processEmail(baseEmail(), d);
+    const reply = (d.sendReply as any).mock.calls[0][0];
+    expect(reply.text).toContain(`capped at ${MAX_INJECTED_IMAGES} images`);
+    expect(reply.text).toMatch(/dropped 1/);
   });
 
   it("clarifies instead of 422-ing when edit names an unknown reference and no image is attached", async () => {

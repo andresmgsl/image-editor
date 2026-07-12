@@ -17,7 +17,7 @@ const telegram = new TelegramClient(config.botToken);
 const prefs = loadPrefsStore(".state/telegram-prefs.json");
 // Persist the poll offset so a restart/redeploy doesn't re-deliver handled updates.
 const offsetStore = loadOffsetStore(".state/telegram-offset.json");
-const library = loadReferenceLibrary(process.env.REFERENCE_ASSETS_DIR ?? "assets");
+const library = await loadReferenceLibrary(process.env.REFERENCE_ASSETS_DIR ?? "assets");
 
 const falAdapter: FalLike = {
   subscribe: (endpoint, opts) => fal.subscribe(endpoint, opts) as ReturnType<FalLike["subscribe"]>,
