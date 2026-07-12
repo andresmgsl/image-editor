@@ -18,6 +18,7 @@ function deps(over: Partial<HandlerDeps> = {}): HandlerDeps {
     produceImage: vi.fn().mockResolvedValue(Buffer.from("out")),
     allowlist: [111],
     prefs: fakePrefs(),
+    library: { entries: [], resolveImages: () => [] },
     ...over,
   };
 }
@@ -225,5 +226,50 @@ describe("truncateCaption", () => {
 
   it("returns short captions unchanged", () => {
     expect(truncateCaption("hello")).toBe("hello");
+  });
+});
+
+describe("handleUpdate — references", () => {
+  function anthropicRef(references: string[]): HandlerDeps["anthropic"] {
+    return {
+      messages: {
+        async create() {
+          return {
+            content: [
+              {
+                type: "tool_use",
+                name: "decide",
+                input: { task: "generate", modelId: "nano-banana-pro", prompt: "a scene", references },
+              },
+            ],
+          };
+        },
+      },
+    };
+  }
+
+  it("injects reference images and overrides to an array-image model", async () => {
+    const refBufs = [Buffer.from("andres1"), Buffer.from("andres2")];
+    const d = deps({
+      anthropic: anthropicRef(["andres"]),
+      library: { entries: [], resolveImages: () => refBufs },
+    });
+    await handleUpdate(textUpdate("an image of andres"), d);
+    expect(d.produceImage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        endpoint: "fal-ai/nano-banana-pro/edit",
+        inputImages: refBufs,
+        imageInput: "image_urls",
+      }),
+    );
+  });
+
+  it("does not fetch a user file when no image is attached", async () => {
+    const d = deps({
+      anthropic: anthropicRef(["andres"]),
+      library: { entries: [], resolveImages: () => [Buffer.from("x")] },
+    });
+    await handleUpdate(textUpdate("an image of andres"), d);
+    expect(d.telegram.getFileBuffer).not.toHaveBeenCalled();
   });
 });
