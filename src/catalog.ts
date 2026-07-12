@@ -65,3 +65,13 @@ export function defaultModelFor(task: TaskType): CatalogModel {
   const id = task === "edit" ? "nano-banana-pro-edit" : "nano-banana-pro";
   return getModel(id)!;
 }
+
+/** True for edit models that accept an array of input images (`image_urls`). */
+export function isArrayImageModel(m: CatalogModel): boolean {
+  return m.imageInput === "image_urls";
+}
+
+/** Default engine for multi-reference injection (best subject consistency). */
+export function defaultMultiReferenceModel(): CatalogModel {
+  return getModel("nano-banana-pro-edit")!;
+}
