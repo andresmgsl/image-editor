@@ -108,4 +108,38 @@ describe("runModel", () => {
 
     expect(subscribe.mock.calls[0][1]).toMatchObject({ timeout: 5_000 });
   });
+
+  it("rejects within the timeout when fal.storage.upload never resolves (single image_url branch)", async () => {
+    const subscribe = vi.fn();
+    const upload = vi.fn().mockReturnValue(new Promise<string>(() => {})); // never settles
+    const fal: FalLike = { subscribe, storage: { upload } };
+
+    await expect(
+      runModel(fal, {
+        endpoint: "fal-ai/qwen-image-edit",
+        prompt: "make it night",
+        inputImages: [Buffer.from("one")],
+        imageInput: "image_url",
+        uploadTimeout: 10,
+      }),
+    ).rejects.toThrow(/fal\.storage\.upload timed out after 10ms/);
+    expect(subscribe).not.toHaveBeenCalled();
+  });
+
+  it("rejects within the timeout when fal.storage.upload never resolves (image_urls array branch)", async () => {
+    const subscribe = vi.fn();
+    const upload = vi.fn().mockReturnValue(new Promise<string>(() => {})); // never settles
+    const fal: FalLike = { subscribe, storage: { upload } };
+
+    await expect(
+      runModel(fal, {
+        endpoint: "fal-ai/bytedance/seedream/v4/edit",
+        prompt: "blend them",
+        inputImages: [Buffer.from("one"), Buffer.from("two")],
+        imageInput: "image_urls",
+        uploadTimeout: 10,
+      }),
+    ).rejects.toThrow(/fal\.storage\.upload timed out after 10ms/);
+    expect(subscribe).not.toHaveBeenCalled();
+  });
 });
