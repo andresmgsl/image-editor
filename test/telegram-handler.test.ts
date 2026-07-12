@@ -1,8 +1,27 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { handleUpdate, truncateCaption, type HandlerDeps } from "../src/telegram-handler.js";
 import { MAX_INJECTED_IMAGES } from "../src/reference-routing.js";
 import type { TgUpdate } from "../src/telegram-client.js";
 import type { PrefsStore } from "../src/telegram-prefs.js";
+
+// handleUpdate logs a one-line summary on every success (console.log) and
+// failure (console.warn/error) — expected production behavior, but noisy in
+// test output. Spy on all three for the whole file (restored after every
+// test) rather than repeating the same boilerplate in ~20 tests; individual
+// tests below additionally assert on the spies where that's natural.
+let logSpy: ReturnType<typeof vi.spyOn>;
+let warnSpy: ReturnType<typeof vi.spyOn>;
+let errorSpy: ReturnType<typeof vi.spyOn>;
+
+beforeEach(() => {
+  logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function fakePrefs(initial: Record<number, string> = {}): PrefsStore {
   const m = new Map<number, string>(Object.entries(initial).map(([k, v]) => [Number(k), v]));
@@ -89,6 +108,7 @@ describe("handleUpdate — generation", () => {
     expect(image).toBeInstanceOf(Buffer);
     expect(caption).toContain("FLUX schnell");
     expect(caption).toContain("a bike");
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("user=111 task=generate model=flux-schnell pinned=auto refs=[] ok"));
   });
 
   it("edits a photo+caption, downloading the file and passing one input image", async () => {
@@ -132,6 +152,7 @@ describe("handleUpdate — generation", () => {
     const d = deps({ produceImage: vi.fn().mockRejectedValue(new Error("boom")) });
     await handleUpdate(textUpdate("a bike"), d);
     expect(d.telegram.sendMessage).toHaveBeenCalledWith(500, expect.stringMatching(/failed/i));
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("user=111 task=generate pinned=auto err"), expect.any(Error));
   });
 
   it("tells the user the service is temporarily unavailable (not 'rephrase') when interpret fails with a transport/API error", async () => {
@@ -142,6 +163,7 @@ describe("handleUpdate — generation", () => {
     expect(d.telegram.sendMessage).toHaveBeenCalledWith(500, expect.stringMatching(/unavailable/i));
     expect(d.telegram.sendMessage).not.toHaveBeenCalledWith(500, expect.stringMatching(/rephrase/i));
     expect(d.produceImage).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("user=111 interpret failed"), expect.any(Error));
   });
 
   it("truncates an overlong caption to Telegram's 1024-char limit", async () => {
@@ -377,6 +399,7 @@ describe("handleUpdate — references", () => {
     expect(caption).toMatch(/dropped 1/);
     // M6: the cap in the copy must track the MAX_INJECTED_IMAGES constant, not a hardcoded literal.
     expect(caption).toContain(`capped at ${MAX_INJECTED_IMAGES} images`);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining(`dropped 1 image(s) over the ${MAX_INJECTED_IMAGES} cap`));
   });
 
   it("guides the user instead of 422-ing when edit names an unknown reference and no image is attached", async () => {

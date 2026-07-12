@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { resolveGeneration, MAX_INJECTED_IMAGES } from "../src/reference-routing.js";
 import { defaultModelFor } from "../src/catalog.js";
 
@@ -46,10 +46,13 @@ describe("resolveGeneration", () => {
   });
 
   it("trims injected images to the cap and reports the dropped count", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const many = Array.from({ length: MAX_INJECTED_IMAGES + 3 }, (_, i) => buf(`i${i}`));
     const r = resolveGeneration({ chosenModelId: "seedream-edit", userImages: many, refImages: [] });
     expect(r.images.length).toBe(MAX_INJECTED_IMAGES);
     expect(r.droppedCount).toBe(3);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining(`dropped 3 image(s) over the ${MAX_INJECTED_IMAGES} cap`));
+    warnSpy.mockRestore();
   });
 
   it("never keeps an edit model when there are zero images (would 422 with no image)", () => {

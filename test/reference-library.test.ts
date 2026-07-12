@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import sharp from "sharp";
 import { loadReferenceLibrary } from "../src/reference-library.js";
@@ -31,16 +31,22 @@ describe("loadReferenceLibrary", () => {
   });
 
   it("drops unknown ids without throwing", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const lib = await loadReferenceLibrary(FIXTURE);
     const bufs = lib.resolveImages(["nope", "shirt"]);
     expect(bufs).toHaveLength(1);
     expect(await widthOf(bufs[0])).toBe(60);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/unknown id "nope"/));
+    warnSpy.mockRestore();
   });
 
   it("returns an empty library when the manifest is absent", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const lib = await loadReferenceLibrary("test/fixtures/does-not-exist");
     expect(lib.entries).toEqual([]);
     expect(lib.resolveImages(["andres"])).toEqual([]);
+    expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/no manifest at/));
+    logSpy.mockRestore();
   });
 
   it("throws when a referenced image file is missing", async () => {

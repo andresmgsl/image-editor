@@ -18,6 +18,7 @@ function email(id: string): IncomingEmail {
 
 describe("runOnce", () => {
   it("processes each unread email and marks it read", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const markRead = vi.fn().mockResolvedValue(undefined);
     const deps = {
       mailbox: { fetchUnread: vi.fn().mockResolvedValue([email("m1"), email("m2")]), markRead },
@@ -29,6 +30,9 @@ describe("runOnce", () => {
     expect(fakeProcess).toHaveBeenCalledTimes(2);
     expect(markRead).toHaveBeenCalledWith("m1");
     expect(markRead).toHaveBeenCalledWith("m2");
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("[msg m1] a@b.com -> generated"));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("[msg m2] a@b.com -> generated"));
+    logSpy.mockRestore();
   });
 
   it("does not leak a refresh_token-bearing error property into the per-message unhandled-error log", async () => {
@@ -54,11 +58,14 @@ describe("runOnce", () => {
 
 describe("runLoop", () => {
   it("survives a failing cycle and stops when told", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     let checks = 0;
     const once = vi.fn().mockRejectedValue(new Error("gmail down"));
     const shouldStop = () => checks++ >= 1;
     await runLoop({} as any, 0, shouldStop, once);
     expect(once).toHaveBeenCalledTimes(1);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Poll cycle failed"), "gmail down");
+    errorSpy.mockRestore();
   });
 
   it("does not leak a refresh_token-bearing error property into poll-cycle logs", async () => {
