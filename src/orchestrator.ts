@@ -60,9 +60,13 @@ export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps)
       err instanceof InterpreterUnavailableError
         ? "Sorry — the image service is temporarily unavailable right now. Please try again in a few minutes."
         : "Sorry — I couldn't understand that request after a few tries. Please rephrase it and send it again.";
-    await deps.sendReply(buildReply(email, { text }));
+    // Mark done BEFORE the reply: a persistently broken Gmail send must not
+    // leave the counter leaked or the message unprocessed, or interpret would
+    // re-run (paid Opus) every poll forever. A thrown reply then propagates to
+    // loop.ts's catch, but the message is already finalized.
     deps.attempts.clear(email.id); // don't leak the counter now that we're done with this id
     deps.processed.add(email.id);
+    await deps.sendReply(buildReply(email, { text }));
     return "error";
   }
   deps.attempts.clear(email.id);
@@ -126,12 +130,16 @@ export async function processEmail(email: IncomingEmail, deps: OrchestratorDeps)
     });
   } catch (err) {
     console.error(`Generation failed for msg ${email.id}:`, err);
+    // Mark processed BEFORE the reply — a persistently broken Gmail send must
+    // not leave the message unprocessed, or interpret+fal re-run every poll
+    // forever. A thrown reply propagates to loop.ts's catch (logged), but the
+    // message is already finalized so there's no re-run.
+    deps.processed.add(email.id);
     await deps.sendReply(
       buildReply(email, {
         text: "Sorry — that request failed to generate. Try rephrasing it and send again.",
       }),
     );
-    deps.processed.add(email.id);
     return "error";
   }
 

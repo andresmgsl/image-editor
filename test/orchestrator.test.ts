@@ -181,6 +181,18 @@ describe("processEmail", () => {
     expect(reply.text).toMatch(/failed/i);
   });
 
+  it("marks the message processed even when the generation-failure reply also fails to send", async () => {
+    // Same money-burning ordering as the success path: if generation fails AND
+    // the error reply's sendReply throws (persistently broken Gmail send), the
+    // message must still be marked processed so interpret+fal don't re-run forever.
+    const d = deps({
+      produceImage: vi.fn().mockRejectedValue(new Error("boom")),
+      sendReply: vi.fn().mockRejectedValue(new Error("smtp down")),
+    });
+    await expect(processEmail(baseEmail(), d)).rejects.toThrow("smtp down");
+    expect(d.processed.add).toHaveBeenCalledWith("m1");
+  });
+
   it("retries (throws, no reply, not marked) when interpret fails under the cap", async () => {
     const record = vi.fn().mockReturnValue(1);
     const d = deps({ anthropic: anthropicThrowing(), attempts: { record, clear: vi.fn() } });
@@ -201,6 +213,21 @@ describe("processEmail", () => {
     expect(reply.text).not.toMatch(/rephrase/i);
     expect(d.processed.add).toHaveBeenCalledWith("m1");
     expect(clear).toHaveBeenCalledWith("m1"); // counter cleared, not leaked
+  });
+
+  it("clears the attempts counter and marks processed even when the interpret give-up reply fails to send", async () => {
+    // At the cap, a persistently broken Gmail send must not leave the counter
+    // leaked or the message unprocessed — otherwise interpret re-runs forever.
+    const record = vi.fn().mockReturnValue(3);
+    const clear = vi.fn();
+    const d = deps({
+      anthropic: anthropicThrowing(),
+      attempts: { record, clear },
+      sendReply: vi.fn().mockRejectedValue(new Error("smtp down")),
+    });
+    await expect(processEmail(baseEmail(), d)).rejects.toThrow("smtp down");
+    expect(clear).toHaveBeenCalledWith("m1");
+    expect(d.processed.add).toHaveBeenCalledWith("m1");
   });
 
   it("gives up with a 'couldn't understand / rephrase' reply once the cap is reached on a malformed decision (non-transport error)", async () => {
