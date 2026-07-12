@@ -180,6 +180,23 @@ describe("handleUpdate — input handling", () => {
     expect(d.produceImage).not.toHaveBeenCalled();
   });
 
+  it("rejects an over-large photo with guidance and does not generate", async () => {
+    const d = deps();
+    const update: TgUpdate = {
+      update_id: 7,
+      message: {
+        message_id: 7,
+        from: { id: 111 },
+        chat: { id: 500 },
+        caption: "edit this",
+        photo: [{ file_id: "P1", width: 100, height: 100, file_size: 25 * 1024 * 1024 }],
+      },
+    };
+    await handleUpdate(update, d);
+    expect(d.telegram.sendMessage).toHaveBeenCalledWith(500, expect.stringMatching(/too large|20 ?MB/i));
+    expect(d.produceImage).not.toHaveBeenCalled();
+  });
+
   it("ignores a non-image document (treats the caption as a generate request)", async () => {
     const d = deps();
     await handleUpdate(docUpdate("a poster", { mime: "application/pdf" }), d);

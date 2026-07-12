@@ -57,7 +57,9 @@ type ImageSource =
  */
 function resolveImageSource(msg: NonNullable<TgUpdate["message"]>): ImageSource {
   if (msg.photo && msg.photo.length > 0) {
-    return { kind: "image", fileId: msg.photo[msg.photo.length - 1].file_id };
+    const largest = msg.photo[msg.photo.length - 1];
+    if ((largest.file_size ?? 0) > MAX_IMAGE_BYTES) return { kind: "too-large" };
+    return { kind: "image", fileId: largest.file_id };
   }
   const doc = msg.document;
   if (doc && (doc.mime_type ?? "").startsWith("image/")) {

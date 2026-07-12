@@ -21,7 +21,9 @@ const library = loadReferenceLibrary(process.env.REFERENCE_ASSETS_DIR ?? "assets
 
 const falAdapter: FalLike = {
   subscribe: (endpoint, opts) => fal.subscribe(endpoint, opts) as ReturnType<FalLike["subscribe"]>,
-  storage: { upload: (data: Buffer) => fal.storage.upload(new Blob([new Uint8Array(data)])) },
+  storage: {
+    upload: (data: Buffer) => fal.storage.upload(new Blob([new Uint8Array(data)], { type: "image/jpeg" })),
+  },
 };
 
 const produceImage = async (args: {
