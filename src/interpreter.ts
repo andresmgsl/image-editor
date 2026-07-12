@@ -26,6 +26,24 @@ export interface AnthropicLike {
   };
 }
 
+/**
+ * Thrown when the Anthropic API call itself fails (transport error, rate limit,
+ * 529 overloaded, network failure) — as opposed to the model returning a
+ * malformed/invalid decision. Callers should tell the user the service is
+ * temporarily unavailable, NOT that they should rephrase their request:
+ * rephrasing can't fix a request that never reached the model.
+ */
+export class InterpreterUnavailableError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "InterpreterUnavailableError";
+  }
+}
+
+// NOTE: strict tool use is intentionally NOT enabled — the decide tool has
+// conditionally-required fields (modelId/prompt for generate/edit, message for
+// clarify) that strict mode's all-required constraint can't express; the Zod
+// safeParse + retry below is the guard instead.
 const DECIDE_TOOL = {
   name: "decide",
   description: "Decide how to handle the image request.",
@@ -97,19 +115,29 @@ export async function interpret(
 ): Promise<Decision> {
   let lastErr: unknown = new Error("Interpreter: no attempts ran");
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    const res = await client.messages.create({
-      model: "claude-opus-4-8",
-      max_tokens: 1024,
-      system: systemPrompt(input.library ?? []),
-      tools: [DECIDE_TOOL],
-      tool_choice: { type: "tool", name: "decide" },
-      messages: [
-        {
-          role: "user",
-          content: `Image attached: ${input.hasImage ? "yes" : "no"}\n\nRequest:\n${input.text || "(empty)"}`,
-        },
-      ],
-    });
+    // A thrown API/transport error (rate limit, 529 overloaded, network failure)
+    // is a different failure class than a malformed decision: it means the
+    // request never reached the model, so retrying here (or telling the user
+    // to rephrase) would be wrong. Classify it and let it propagate immediately
+    // — do NOT fall into the malformed-response retry path below.
+    let res: { content: Array<{ type: string; name?: string; input?: unknown }> };
+    try {
+      res = await client.messages.create({
+        model: "claude-opus-4-8",
+        max_tokens: 1024,
+        system: systemPrompt(input.library ?? []),
+        tools: [DECIDE_TOOL],
+        tool_choice: { type: "tool", name: "decide" },
+        messages: [
+          {
+            role: "user",
+            content: `Image attached: ${input.hasImage ? "yes" : "no"}\n\nRequest:\n${input.text || "(empty)"}`,
+          },
+        ],
+      });
+    } catch (cause) {
+      throw new InterpreterUnavailableError("Anthropic API request failed", { cause });
+    }
 
     const block = res.content.find((b) => b.type === "tool_use" && b.name === "decide");
     if (!block) {

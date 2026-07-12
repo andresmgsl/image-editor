@@ -35,6 +35,8 @@ export interface TelegramApi {
 
 // Abort a non-long-poll request that hangs this long (undici's default is ~5 min).
 const REQUEST_TIMEOUT_MS = 20_000;
+// Bot API caps files at 20 MB; enforce the same ceiling on the download itself.
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
 export class TelegramClient implements TelegramApi {
   constructor(private token: string) {}
@@ -121,6 +123,16 @@ export class TelegramClient implements TelegramApi {
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (!dl.ok) throw new Error(`file download failed: HTTP ${dl.status}`);
-    return Buffer.from(await dl.arrayBuffer());
+
+    const contentLength = Number(dl.headers.get("content-length"));
+    if (Number.isFinite(contentLength) && contentLength > MAX_IMAGE_BYTES) {
+      throw new Error(`file download exceeds ${MAX_IMAGE_BYTES}-byte limit (content-length: ${contentLength})`);
+    }
+
+    const buf = Buffer.from(await dl.arrayBuffer());
+    if (buf.byteLength > MAX_IMAGE_BYTES) {
+      throw new Error(`file download exceeds ${MAX_IMAGE_BYTES}-byte limit (actual: ${buf.byteLength})`);
+    }
+    return buf;
   }
 }

@@ -17,11 +17,13 @@ const telegram = new TelegramClient(config.botToken);
 const prefs = loadPrefsStore(".state/telegram-prefs.json");
 // Persist the poll offset so a restart/redeploy doesn't re-deliver handled updates.
 const offsetStore = loadOffsetStore(".state/telegram-offset.json");
-const library = loadReferenceLibrary(process.env.REFERENCE_ASSETS_DIR ?? "assets");
+const library = await loadReferenceLibrary(process.env.REFERENCE_ASSETS_DIR ?? "assets");
 
 const falAdapter: FalLike = {
   subscribe: (endpoint, opts) => fal.subscribe(endpoint, opts) as ReturnType<FalLike["subscribe"]>,
-  storage: { upload: (data: Buffer) => fal.storage.upload(new Blob([new Uint8Array(data)])) },
+  storage: {
+    upload: (data: Buffer) => fal.storage.upload(new Blob([new Uint8Array(data)], { type: "image/jpeg" })),
+  },
 };
 
 const produceImage = async (args: {
@@ -35,10 +37,21 @@ const produceImage = async (args: {
   return toLowRes(full);
 };
 
+// Graceful shutdown: flip a mutable flag on SIGTERM/SIGINT (e.g. a Coolify redeploy)
+// so the loop drains its current cycle and exits cleanly instead of being killed
+// mid-batch (which would otherwise interact with offset persistence — see telegram-loop.ts).
+let shouldStop = false;
+process.on("SIGTERM", () => {
+  shouldStop = true;
+});
+process.on("SIGINT", () => {
+  shouldStop = true;
+});
+
 console.log("Telegram image bot started. Long-polling for updates.");
 await runTelegramLoop(
   { telegram, anthropic, produceImage, allowlist: config.allowlist, prefs, library },
-  () => false,
+  () => shouldStop,
   30,
   undefined,
   offsetStore,

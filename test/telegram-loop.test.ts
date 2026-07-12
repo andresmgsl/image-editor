@@ -29,26 +29,74 @@ describe("runTelegramLoop", () => {
   });
 
   it("keeps going when a handler throws", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const getUpdates = vi.fn().mockResolvedValueOnce([u(10), u(11)]).mockResolvedValue([]);
     const d = depsWith(getUpdates);
     const handle = vi.fn().mockRejectedValueOnce(new Error("boom")).mockResolvedValue(undefined);
     let calls = 0;
     await runTelegramLoop(d, () => ++calls > 2, 0, handle);
     expect(handle).toHaveBeenCalledTimes(2);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("update 10 failed"), expect.any(Error));
+    errorSpy.mockRestore();
   });
 
-  it("loads the starting offset from the store and persists it after each batch", async () => {
+  it("loads the starting offset from the store and persists it after each handled update", async () => {
     let stored = 5;
-    const offsetStore = { get: () => stored, set: (o: number) => { stored = o; } };
+    const sets: number[] = [];
+    const offsetStore = { get: () => stored, set: (o: number) => { stored = o; sets.push(o); } };
     const getUpdates = vi.fn().mockResolvedValueOnce([u(10), u(11)]).mockResolvedValue([]);
     const d = depsWith(getUpdates);
     let calls = 0;
     await runTelegramLoop(d, () => ++calls > 2, 0, vi.fn().mockResolvedValue(undefined), offsetStore);
     expect(getUpdates.mock.calls[0][0]).toBe(5); // started from the persisted offset
-    expect(stored).toBe(12); // persisted the advanced offset after the batch
+    expect(sets).toEqual([11, 12]); // persisted after each handled update, not only at batch end
+    expect(stored).toBe(12);
+  });
+
+  it("persists the offset after each handled update in a multi-update batch", async () => {
+    const sets: number[] = [];
+    const offsetStore = { get: () => 0, set: (o: number) => { sets.push(o); } };
+    const getUpdates = vi.fn().mockResolvedValueOnce([u(10), u(11), u(12)]).mockResolvedValue([]);
+    const d = depsWith(getUpdates);
+    const handle = vi.fn().mockResolvedValue(undefined);
+    let calls = 0;
+    await runTelegramLoop(d, () => ++calls > 2, 0, handle, offsetStore);
+    expect(sets).toEqual([11, 12, 13]);
+  });
+
+  it("still persists the advance for handled updates when a later update in the batch throws", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const sets: number[] = [];
+    const offsetStore = { get: () => 0, set: (o: number) => { sets.push(o); } };
+    const getUpdates = vi.fn().mockResolvedValueOnce([u(10), u(11), u(12)]).mockResolvedValue([]);
+    const d = depsWith(getUpdates);
+    const handle = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockResolvedValueOnce(undefined);
+    let calls = 0;
+    await runTelegramLoop(d, () => ++calls > 2, 0, handle, offsetStore);
+    // The throwing update (11) still advances and persists past it — it is not retried —
+    // but crucially each persist happens immediately, not only after the whole batch.
+    expect(sets).toEqual([11, 12, 13]);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("update 11 failed"), expect.any(Error));
+    errorSpy.mockRestore();
+  });
+
+  it("stops once an external shouldStop flag is flipped (mirrors the SIGTERM wiring in index files)", async () => {
+    let stop = false;
+    const getUpdates = vi.fn().mockImplementation(async () => {
+      if (getUpdates.mock.calls.length >= 2) stop = true; // simulate a signal handler flipping the flag
+      return [];
+    });
+    const d = depsWith(getUpdates);
+    await runTelegramLoop(d, () => stop, 0, vi.fn());
+    expect(getUpdates).toHaveBeenCalledTimes(2);
   });
 
   it("keeps going when getUpdates rejects, retrying instead of throwing", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.useFakeTimers();
     try {
       const getUpdates = vi.fn().mockRejectedValueOnce(new Error("network down")).mockResolvedValue([]);
@@ -60,8 +108,10 @@ describe("runTelegramLoop", () => {
       await done;
       expect(getUpdates).toHaveBeenCalledTimes(2);
       expect(handle).not.toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("getUpdates failed; retrying"), expect.any(Error));
     } finally {
       vi.useRealTimers();
+      errorSpy.mockRestore();
     }
   });
 });

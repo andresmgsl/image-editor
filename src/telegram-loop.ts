@@ -34,9 +34,11 @@ export async function runTelegramLoop(
       } catch (err) {
         console.error(`update ${update.update_id} failed:`, err);
       }
+      // Persist after each handled update (not just at batch end) so a crash/redeploy
+      // resumes past exactly what was already handled, instead of re-delivering (and
+      // re-billing Claude + fal for) the rest of the batch. A throwing update still
+      // advances past itself here — it is not retried, matching prior semantics.
+      offsetStore.set(offset);
     }
-    // Persist the advanced offset so a crash/redeploy resumes past this batch
-    // instead of re-delivering it.
-    if (updates.length > 0) offsetStore.set(offset);
   }
 }

@@ -1,7 +1,27 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { handleUpdate, truncateCaption, type HandlerDeps } from "../src/telegram-handler.js";
+import { MAX_INJECTED_IMAGES } from "../src/reference-routing.js";
 import type { TgUpdate } from "../src/telegram-client.js";
 import type { PrefsStore } from "../src/telegram-prefs.js";
+
+// handleUpdate logs a one-line summary on every success (console.log) and
+// failure (console.warn/error) — expected production behavior, but noisy in
+// test output. Spy on all three for the whole file (restored after every
+// test) rather than repeating the same boilerplate in ~20 tests; individual
+// tests below additionally assert on the spies where that's natural.
+let logSpy: ReturnType<typeof vi.spyOn>;
+let warnSpy: ReturnType<typeof vi.spyOn>;
+let errorSpy: ReturnType<typeof vi.spyOn>;
+
+beforeEach(() => {
+  logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function fakePrefs(initial: Record<number, string> = {}): PrefsStore {
   const m = new Map<number, string>(Object.entries(initial).map(([k, v]) => [Number(k), v]));
@@ -88,6 +108,7 @@ describe("handleUpdate — generation", () => {
     expect(image).toBeInstanceOf(Buffer);
     expect(caption).toContain("FLUX schnell");
     expect(caption).toContain("a bike");
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("user=111 task=generate model=flux-schnell pinned=auto refs=[] ok"));
   });
 
   it("edits a photo+caption, downloading the file and passing one input image", async () => {
@@ -131,6 +152,18 @@ describe("handleUpdate — generation", () => {
     const d = deps({ produceImage: vi.fn().mockRejectedValue(new Error("boom")) });
     await handleUpdate(textUpdate("a bike"), d);
     expect(d.telegram.sendMessage).toHaveBeenCalledWith(500, expect.stringMatching(/failed/i));
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("user=111 task=generate pinned=auto err"), expect.any(Error));
+  });
+
+  it("tells the user the service is temporarily unavailable (not 'rephrase') when interpret fails with a transport/API error", async () => {
+    const d = deps({
+      anthropic: { messages: { async create() { throw new Error("529 overloaded_error"); } } },
+    });
+    await handleUpdate(textUpdate("a bike"), d);
+    expect(d.telegram.sendMessage).toHaveBeenCalledWith(500, expect.stringMatching(/unavailable/i));
+    expect(d.telegram.sendMessage).not.toHaveBeenCalledWith(500, expect.stringMatching(/rephrase/i));
+    expect(d.produceImage).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("user=111 interpret failed"), expect.any(Error));
   });
 
   it("truncates an overlong caption to Telegram's 1024-char limit", async () => {
@@ -139,6 +172,18 @@ describe("handleUpdate — generation", () => {
     await handleUpdate(textUpdate("draw something"), d);
     const caption = (d.telegram.sendPhoto as any).mock.calls[0][2];
     expect(caption.length).toBeLessThanOrEqual(1024);
+  });
+
+  it("truncates the prompt, not the note, so a very long prompt still shows the pinned-model note (M5)", async () => {
+    const longPrompt = "a".repeat(2000);
+    const d = deps({
+      anthropic: anthropicReturning({ task: "edit", modelId: "nano-banana-pro-edit", prompt: longPrompt }),
+      prefs: fakePrefs({ 111: "flux-schnell" }), // pinned model can't edit -> falls back with a note
+    });
+    await handleUpdate(photoUpdate(longPrompt), d);
+    const caption = (d.telegram.sendPhoto as any).mock.calls[0][2];
+    expect(caption.length).toBeLessThanOrEqual(1024);
+    expect(caption).toMatch(/used auto\)$/i); // note survives at the very end, unclipped
   });
 
   it("does not mislabel a sendPhoto failure as a generation failure", async () => {
@@ -152,6 +197,32 @@ describe("handleUpdate — generation", () => {
     });
     await expect(handleUpdate(textUpdate("a bike"), d)).rejects.toThrow("caption too long");
     expect(d.telegram.sendMessage).not.toHaveBeenCalledWith(500, expect.stringMatching(/failed to generate/i));
+  });
+
+  it("attempts a delivery-failure fallback message when sendPhoto rejects, then still rethrows", async () => {
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    const d = deps({
+      telegram: {
+        getUpdates: vi.fn(),
+        sendMessage,
+        sendPhoto: vi.fn().mockRejectedValue(new Error("network blip")),
+        getFileBuffer: vi.fn().mockResolvedValue(Buffer.from("img")),
+      },
+    });
+    await expect(handleUpdate(textUpdate("a bike"), d)).rejects.toThrow("network blip");
+    expect(sendMessage).toHaveBeenCalledWith(500, expect.stringMatching(/couldn't deliver/i));
+  });
+
+  it("still rethrows the original sendPhoto error even when the fallback sendMessage also fails", async () => {
+    const d = deps({
+      telegram: {
+        getUpdates: vi.fn(),
+        sendMessage: vi.fn().mockRejectedValue(new Error("also down")),
+        sendPhoto: vi.fn().mockRejectedValue(new Error("network blip")),
+        getFileBuffer: vi.fn().mockResolvedValue(Buffer.from("img")),
+      },
+    });
+    await expect(handleUpdate(textUpdate("a bike"), d)).rejects.toThrow("network blip");
   });
 });
 
@@ -176,6 +247,23 @@ describe("handleUpdate — input handling", () => {
   it("rejects an over-large image document with guidance and does not generate", async () => {
     const d = deps();
     await handleUpdate(docUpdate("edit this", { size: 25 * 1024 * 1024 }), d);
+    expect(d.telegram.sendMessage).toHaveBeenCalledWith(500, expect.stringMatching(/too large|20 ?MB/i));
+    expect(d.produceImage).not.toHaveBeenCalled();
+  });
+
+  it("rejects an over-large photo with guidance and does not generate", async () => {
+    const d = deps();
+    const update: TgUpdate = {
+      update_id: 7,
+      message: {
+        message_id: 7,
+        from: { id: 111 },
+        chat: { id: 500 },
+        caption: "edit this",
+        photo: [{ file_id: "P1", width: 100, height: 100, file_size: 25 * 1024 * 1024 }],
+      },
+    };
+    await handleUpdate(update, d);
     expect(d.telegram.sendMessage).toHaveBeenCalledWith(500, expect.stringMatching(/too large|20 ?MB/i));
     expect(d.produceImage).not.toHaveBeenCalled();
   });
@@ -309,5 +397,89 @@ describe("handleUpdate — references", () => {
     await handleUpdate(textUpdate("an image of andres"), d);
     const caption = (d.telegram.sendPhoto as any).mock.calls[0][2];
     expect(caption).toMatch(/dropped 1/);
+    // M6: the cap in the copy must track the MAX_INJECTED_IMAGES constant, not a hardcoded literal.
+    expect(caption).toContain(`capped at ${MAX_INJECTED_IMAGES} images`);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining(`dropped 1 image(s) over the ${MAX_INJECTED_IMAGES} cap`));
+  });
+
+  it("guides the user instead of 422-ing when edit names an unknown reference and no image is attached", async () => {
+    const d = deps({
+      anthropic: {
+        messages: {
+          async create() {
+            return {
+              content: [
+                {
+                  type: "tool_use",
+                  name: "decide",
+                  input: {
+                    task: "edit",
+                    modelId: "nano-banana-pro-edit",
+                    prompt: "make it night",
+                    references: ["unknown"],
+                  },
+                },
+              ],
+            };
+          },
+        },
+      },
+      library: { entries: [], resolveImages: () => [] }, // unknown id resolves to nothing
+    });
+    await handleUpdate(textUpdate("edit the photo of unknown-person to make it night"), d);
+    expect(d.produceImage).not.toHaveBeenCalled();
+    expect(d.telegram.sendMessage).toHaveBeenCalledWith(
+      500,
+      expect.stringMatching(/none was attached|no image|attach|reference/i),
+    );
+  });
+
+  it("clarifies instead of silently generating when a generate task names an unresolved reference", async () => {
+    const d = deps({
+      anthropic: anthropicRef(["unknown"]),
+      library: { entries: [], resolveImages: () => [] },
+    });
+    await handleUpdate(textUpdate("a photo of unknown-person"), d);
+    expect(d.produceImage).not.toHaveBeenCalled();
+    expect(d.telegram.sendMessage).toHaveBeenCalledWith(
+      500,
+      expect.stringMatching(/reference|couldn't find|not found/i),
+    );
+  });
+
+  it("proceeds with the attached photo when an edit names an unresolved reference", async () => {
+    const d = deps({
+      anthropic: {
+        messages: {
+          async create() {
+            return {
+              content: [
+                {
+                  type: "tool_use",
+                  name: "decide",
+                  input: {
+                    task: "edit",
+                    modelId: "nano-banana-pro-edit",
+                    prompt: "put me next to andres",
+                    references: ["unknown"],
+                  },
+                },
+              ],
+            };
+          },
+        },
+      },
+      library: { entries: [], resolveImages: () => [] }, // empty library — reference resolves to nothing
+    });
+    await handleUpdate(photoUpdate("put me next to andres"), d);
+    // The attached photo carries the edit; the request is satisfiable, so proceed.
+    expect(d.produceImage).toHaveBeenCalledWith(
+      expect.objectContaining({ endpoint: "fal-ai/nano-banana-pro/edit", inputImages: [Buffer.from("img")] }),
+    );
+    // Not blocked with a "reference not found" clarify.
+    expect(d.telegram.sendMessage).not.toHaveBeenCalledWith(
+      500,
+      expect.stringMatching(/reference|couldn't find|not found/i),
+    );
   });
 });

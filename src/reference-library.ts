@@ -1,6 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { downscaleToMax } from "./image.js";
+
+// Reference-library images are uploaded to fal on every generation that names
+// them; fidelity beyond this cap buys nothing but costs upload time, so
+// downscale once at load time rather than per-request.
+const REFERENCE_MAX_EDGE = 2048;
 
 export interface ReferenceEntry {
   id: string;
@@ -29,7 +35,11 @@ const ManifestSchema = z.array(EntrySchema);
 
 const EMPTY: ReferenceLibrary = { entries: [], resolveImages: () => [] };
 
-export function loadReferenceLibrary(rootDir: string): ReferenceLibrary {
+// sharp is async-only, so downscaling reference images at load time requires
+// this to be async too. Callers (telegram-index.ts, email-index.ts) already
+// use top-level await, so `await loadReferenceLibrary(...)` keeps the same
+// fail-fast-at-startup behavior — just a promise the caller now awaits.
+export async function loadReferenceLibrary(rootDir: string): Promise<ReferenceLibrary> {
   const manifestPath = join(rootDir, "library.json");
   if (!existsSync(manifestPath)) {
     console.log(`Reference library: no manifest at ${manifestPath}; running with an empty library.`);
@@ -42,18 +52,30 @@ export function loadReferenceLibrary(rootDir: string): ReferenceLibrary {
   } catch (err) {
     throw new Error(`Reference library: failed to read/parse ${manifestPath}: ${(err as Error).message}`);
   }
-  const entries = ManifestSchema.parse(raw) as ReferenceEntry[];
 
+  let entries: ReferenceEntry[];
+  try {
+    entries = ManifestSchema.parse(raw) as ReferenceEntry[];
+  } catch (err) {
+    throw new Error(`Reference library: invalid manifest schema in ${manifestPath}: ${(err as Error).message}`);
+  }
+
+  // Validate ids up front, before touching the filesystem for any image, so a
+  // duplicate id fails fast regardless of read/decode order.
   const seen = new Set<string>();
-  const buffers = new Map<string, Buffer[]>();
   for (const entry of entries) {
     if (seen.has(entry.id)) throw new Error(`Reference library: duplicate id "${entry.id}"`);
     seen.add(entry.id);
+  }
+
+  const buffers = new Map<string, Buffer[]>();
+  for (const entry of entries) {
     const bufs: Buffer[] = [];
     for (const rel of entry.images) {
       const abs = join(rootDir, rel);
       if (!existsSync(abs)) throw new Error(`Reference library: missing image "${rel}" for id "${entry.id}"`);
-      bufs.push(readFileSync(abs));
+      const full = readFileSync(abs);
+      bufs.push(await downscaleToMax(full, REFERENCE_MAX_EDGE));
     }
     buffers.set(entry.id, bufs);
   }

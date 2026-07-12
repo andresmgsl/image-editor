@@ -1,7 +1,7 @@
-import { interpret, type AnthropicLike } from "./interpreter.js";
+import { interpret, InterpreterUnavailableError, type AnthropicLike } from "./interpreter.js";
 import { CATALOG, getModel, isValidChoice, type CatalogModel } from "./catalog.js";
 import { isUserAllowed } from "./config.js";
-import { resolveGeneration } from "./reference-routing.js";
+import { resolveGeneration, MAX_INJECTED_IMAGES } from "./reference-routing.js";
 import type { TgUpdate, TelegramApi } from "./telegram-client.js";
 import type { PrefsStore } from "./telegram-prefs.js";
 import type { ReferenceLibrary } from "./reference-library.js";
@@ -36,13 +36,32 @@ function modelsList(): string {
   return CATALOG.map((m) => `${m.id} — ${m.label} (${m.task}): ${m.description}`).join("\n");
 }
 
-/** Truncate a caption to Telegram's limit without splitting a surrogate pair. */
-export function truncateCaption(s: string): string {
-  if (s.length <= MAX_CAPTION_CHARS) return s;
-  let c = s.slice(0, MAX_CAPTION_CHARS);
+/** Truncate a string to `maxLen` UTF-16 units without splitting a surrogate pair. */
+function truncateSurrogateSafe(s: string, maxLen: number): string {
+  if (s.length <= maxLen) return s;
+  let c = s.slice(0, maxLen);
   const last = c.charCodeAt(c.length - 1);
   if (last >= 0xd800 && last <= 0xdbff) c = c.slice(0, -1); // don't leave a lone high surrogate
   return c;
+}
+
+/** Truncate a caption to Telegram's limit without splitting a surrogate pair. */
+export function truncateCaption(s: string): string {
+  return truncateSurrogateSafe(s, MAX_CAPTION_CHARS);
+}
+
+/**
+ * Build a caption that fits Telegram's limit while keeping the informative
+ * suffix note (e.g. "(auto-switched…)"/"(capped at N images…)") intact: the
+ * prompt is the variable-length part, so it — not the note — absorbs the
+ * truncation when the total would overflow.
+ */
+function buildCaption(prefix: string, prompt: string, note: string): string {
+  const budget = Math.max(0, MAX_CAPTION_CHARS - prefix.length - note.length);
+  const truncatedPrompt = truncateSurrogateSafe(prompt, budget);
+  // Safety net: if prefix+note alone already exceed the limit (degenerate,
+  // shouldn't happen in practice), fall back to the old whole-string cut.
+  return truncateCaption(`${prefix}${truncatedPrompt}${note}`);
 }
 
 type ImageSource =
@@ -57,7 +76,9 @@ type ImageSource =
  */
 function resolveImageSource(msg: NonNullable<TgUpdate["message"]>): ImageSource {
   if (msg.photo && msg.photo.length > 0) {
-    return { kind: "image", fileId: msg.photo[msg.photo.length - 1].file_id };
+    const largest = msg.photo[msg.photo.length - 1];
+    if ((largest.file_size ?? 0) > MAX_IMAGE_BYTES) return { kind: "too-large" };
+    return { kind: "image", fileId: largest.file_id };
   }
   const doc = msg.document;
   if (doc && (doc.mime_type ?? "").startsWith("image/")) {
@@ -154,7 +175,11 @@ export async function handleUpdate(update: TgUpdate, deps: HandlerDeps): Promise
     });
   } catch (err) {
     console.error(`user=${userId} interpret failed:`, err);
-    await deps.telegram.sendMessage(chatId, "Sorry — I couldn't understand that. Please rephrase and try again.");
+    const message =
+      err instanceof InterpreterUnavailableError
+        ? "The image service is temporarily unavailable — please try again in a minute."
+        : "Sorry — I couldn't understand that. Please rephrase and try again.";
+    await deps.telegram.sendMessage(chatId, message);
     return;
   }
 
@@ -163,8 +188,14 @@ export async function handleUpdate(update: TgUpdate, deps: HandlerDeps): Promise
     return;
   }
 
-  if (decision.task === "edit" && !imageFileId && decision.references.length === 0) {
-    // Claude asked to edit but the user attached no image — guide them instead of 422-ing fal.
+  // Gate on resolved images, not reference ids: an unknown/empty-library id
+  // silently resolves to zero images, which would otherwise sail through and
+  // 422 at fal with no image_url(s).
+  const refImages = deps.library.resolveImages(decision.references);
+
+  if (decision.task === "edit" && !imageFileId && refImages.length === 0) {
+    // Claude asked to edit but there's no image to work with — no attachment
+    // and no resolved reference — guide the user instead of 422-ing fal.
     await deps.telegram.sendMessage(
       chatId,
       "It looks like you want to edit an image, but none was attached — send the photo (or image file) with your instruction as its caption.",
@@ -172,9 +203,24 @@ export async function handleUpdate(update: TgUpdate, deps: HandlerDeps): Promise
     return;
   }
 
+  if (decision.references.length > 0 && refImages.length === 0 && !imageFileId) {
+    // Named references were requested, none resolved, and there's no attached
+    // image to fall back on — don't silently generate unrelated content.
+    await deps.telegram.sendMessage(
+      chatId,
+      "I couldn't find the reference(s) you mentioned, so I didn't generate anything — check the name, or attach the image directly.",
+    );
+    return;
+  }
+
   const pinned = deps.prefs.get(userId);
   let modelId = decision.modelId;
   let note = "";
+  if (decision.references.length > 0 && refImages.length === 0) {
+    // A user image is present, so the request is still satisfiable — proceed
+    // with the attachment, but don't silently drop the unresolved reference.
+    note += " (couldn't find the named reference — used your attached image)";
+  }
   if (pinned) {
     if (isValidChoice(pinned, decision.task)) modelId = pinned;
     else note = ` (pinned ${pinned} can't ${decision.task} — used auto)`;
@@ -187,11 +233,12 @@ export async function handleUpdate(update: TgUpdate, deps: HandlerDeps): Promise
   try {
     const userImages: Buffer[] = [];
     if (imageFileId) userImages.push(await deps.telegram.getFileBuffer(imageFileId));
-    const refImages = deps.library.resolveImages(decision.references);
     const resolved = resolveGeneration({ chosenModelId: modelId, userImages, refImages });
     model = resolved.model;
     note += resolved.overrideNote;
-    if (resolved.droppedCount > 0) note += ` (capped at 8 images; dropped ${resolved.droppedCount})`;
+    if (resolved.droppedCount > 0) {
+      note += ` (capped at ${MAX_INJECTED_IMAGES} images; dropped ${resolved.droppedCount})`;
+    }
     image = await deps.produceImage({
       endpoint: model.endpoint,
       prompt: decision.prompt,
@@ -209,8 +256,24 @@ export async function handleUpdate(update: TgUpdate, deps: HandlerDeps): Promise
   }
 
   const emoji = decision.task === "edit" ? "✏️" : "🎨";
-  const caption = truncateCaption(`${emoji} ${model.label} · ${decision.prompt}${note}`);
-  await deps.telegram.sendPhoto(chatId, image, caption);
+  const caption = buildCaption(`${emoji} ${model.label} · `, decision.prompt, note);
+  try {
+    await deps.telegram.sendPhoto(chatId, image, caption);
+  } catch (err) {
+    // Delivery failed after a paid, successful generation — don't go fully silent.
+    // Try a different endpoint (sendMessage) once; if that also fails, the original
+    // sendPhoto error still propagates so the loop logs it (intentionally NOT
+    // mislabeled as a generation failure — see the regression test for that).
+    try {
+      await deps.telegram.sendMessage(
+        chatId,
+        "I generated your image but couldn't deliver it — please try again",
+      );
+    } catch {
+      // fallback also failed; fall through to rethrow the original error below.
+    }
+    throw err;
+  }
   console.log(
     `user=${userId} task=${decision.task} model=${model.id} pinned=${pinned ?? "auto"} ` +
       `refs=${JSON.stringify(decision.references)} ok ${((Date.now() - started) / 1000).toFixed(1)}s`,

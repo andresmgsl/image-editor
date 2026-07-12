@@ -6,7 +6,15 @@ export interface ProcessedStore {
   add(id: string): void;
 }
 
-export function loadProcessedStore(filePath: string): ProcessedStore {
+/**
+ * Cap on retained ids. Without a cap `ids.json` grows forever and is
+ * rewritten O(n) on every single `add` — fine at low volume, but a
+ * long-lived mailbox will bloat the file and make every write linear.
+ * Insertion order is preserved by `Set`, so capping just drops the oldest.
+ */
+export const MAX_IDS = 5000;
+
+export function loadProcessedStore(filePath: string, maxIds: number = MAX_IDS): ProcessedStore {
   const set = new Set<string>();
   if (existsSync(filePath)) {
     try {
@@ -26,6 +34,13 @@ export function loadProcessedStore(filePath: string): ProcessedStore {
     has: (id) => set.has(id),
     add: (id) => {
       set.add(id);
+      // Drop the oldest entries once we're over the cap (Set iterates in
+      // insertion order, so the front of the iterator is the oldest).
+      while (set.size > maxIds) {
+        const oldest = set.values().next().value;
+        if (oldest === undefined) break;
+        set.delete(oldest);
+      }
       persist();
     },
   };

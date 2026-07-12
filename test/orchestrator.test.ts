@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { processEmail, type OrchestratorDeps } from "../src/orchestrator.js";
+import { MAX_INJECTED_IMAGES } from "../src/reference-routing.js";
 import type { AnthropicLike } from "../src/interpreter.js";
 import type { IncomingEmail } from "../src/mailbox.js";
 import type { AppConfig } from "../src/config.js";
@@ -78,6 +79,28 @@ describe("processEmail", () => {
     expect(d.produceImage).not.toHaveBeenCalled();
   });
 
+  it("marks processed even when a clarify reply fails to send (paid interpret already consumed)", async () => {
+    // A clarify decision is reached only after a successful (paid) interpret.
+    // A persistently broken Gmail send must not leave the message unprocessed,
+    // or interpret would re-run every poll forever.
+    const d = deps({
+      anthropic: anthropicReturning({ task: "clarify", message: "which style?" }),
+      sendReply: vi.fn().mockRejectedValue(new Error("smtp down")),
+    });
+    await expect(processEmail(baseEmail(), d)).rejects.toThrow("smtp down");
+    expect(d.processed.add).toHaveBeenCalledWith("m1");
+  });
+
+  it("marks processed even when the edit-with-no-image clarify reply fails to send", async () => {
+    const d = deps({
+      anthropic: anthropicReturning({ task: "edit", modelId: "nano-banana-pro-edit", prompt: "night" }),
+      sendReply: vi.fn().mockRejectedValue(new Error("smtp down")),
+    });
+    await expect(processEmail(baseEmail(), d)).rejects.toThrow("smtp down"); // no imageAttachment
+    expect(d.processed.add).toHaveBeenCalledWith("m1");
+    expect(d.produceImage).not.toHaveBeenCalled();
+  });
+
   it("generates from references when edit is requested with no attached image", async () => {
     const refBufs = [Buffer.from("r1")];
     const d = deps({
@@ -108,32 +131,171 @@ describe("processEmail", () => {
     );
   });
 
+  it("reflects the MAX_INJECTED_IMAGES constant in the drop note, not a hardcoded literal (M6)", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const refBufs = Array.from({ length: MAX_INJECTED_IMAGES + 1 }, (_, i) => Buffer.from(`r${i}`));
+    const d = deps({
+      anthropic: anthropicReturning({ task: "generate", modelId: "nano-banana-pro", prompt: "a scene", references: ["andres"] }),
+      library: { entries: [], resolveImages: () => refBufs },
+    });
+    await processEmail(baseEmail(), d);
+    const reply = (d.sendReply as any).mock.calls[0][0];
+    expect(reply.text).toContain(`capped at ${MAX_INJECTED_IMAGES} images`);
+    expect(reply.text).toMatch(/dropped 1/);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining(`dropped 1 image(s) over the ${MAX_INJECTED_IMAGES} cap`));
+    warnSpy.mockRestore();
+  });
+
+  it("clarifies instead of 422-ing when edit names an unknown reference and no image is attached", async () => {
+    const d = deps({
+      anthropic: anthropicReturning({
+        task: "edit",
+        modelId: "nano-banana-pro-edit",
+        prompt: "night",
+        references: ["unknown"],
+      }),
+      library: { entries: [], resolveImages: () => [] }, // unknown id resolves to nothing
+    });
+    const r = await processEmail(baseEmail(), d); // no imageAttachment, unresolved reference
+    expect(r).toBe("clarified");
+    expect(d.produceImage).not.toHaveBeenCalled();
+  });
+
+  it("clarifies instead of silently generating when references resolve to zero images", async () => {
+    const d = deps({
+      anthropic: anthropicReturning({
+        task: "generate",
+        modelId: "nano-banana-pro",
+        prompt: "a scene",
+        references: ["unknown"],
+      }),
+      library: { entries: [], resolveImages: () => [] },
+    });
+    const r = await processEmail(baseEmail(), d);
+    expect(r).toBe("clarified");
+    expect(d.produceImage).not.toHaveBeenCalled();
+    const reply = (d.sendReply as any).mock.calls[0][0];
+    expect(reply.text).toMatch(/reference|couldn't find|not found/i);
+  });
+
+  it("proceeds with the attached image when an edit names an unresolved reference", async () => {
+    const imgs = [Buffer.from("a")];
+    const d = deps({
+      anthropic: anthropicReturning({
+        task: "edit",
+        modelId: "nano-banana-pro-edit",
+        prompt: "put me next to andres",
+        references: ["unknown"],
+      }),
+      library: { entries: [], resolveImages: () => [] }, // empty library — reference resolves to nothing
+    });
+    const r = await processEmail(baseEmail({ imageAttachments: imgs }), d);
+    // The attached image carries the edit; the request is satisfiable, so proceed.
+    expect(r).toBe("generated");
+    expect(d.produceImage).toHaveBeenCalledWith(
+      expect.objectContaining({ endpoint: "fal-ai/nano-banana-pro/edit", inputImages: imgs }),
+    );
+  });
+
+  it("does not mislabel a sendReply failure as a generation failure, and marks the message processed to prevent an unbounded regenerate loop", async () => {
+    const sendReply = vi.fn().mockRejectedValue(new Error("smtp down"));
+    const d = deps({ sendReply });
+    await expect(processEmail(baseEmail(), d)).rejects.toThrow("smtp down");
+    // Generation succeeded (fal was paid), so the message must be marked
+    // processed regardless of the reply failure — otherwise every poll would
+    // re-run interpret + fal generation forever while Gmail send is broken.
+    expect(d.processed.add).toHaveBeenCalledWith("m1");
+    // Only the success reply was attempted — never the "failed to generate" text.
+    expect(sendReply).toHaveBeenCalledTimes(1);
+    const attemptedReply = sendReply.mock.calls[0][0];
+    expect(attemptedReply.text).not.toMatch(/failed to generate/i);
+  });
+
   it("replies with an error message when generation throws", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const d = deps({ produceImage: vi.fn().mockRejectedValue(new Error("boom")) });
     const r = await processEmail(baseEmail(), d);
     expect(r).toBe("error");
     const reply = (d.sendReply as any).mock.calls[0][0];
     expect(reply.text).toMatch(/failed/i);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Generation failed for msg m1"), expect.any(Error));
+    errorSpy.mockRestore();
+  });
+
+  it("marks the message processed even when the generation-failure reply also fails to send", async () => {
+    // Same money-burning ordering as the success path: if generation fails AND
+    // the error reply's sendReply throws (persistently broken Gmail send), the
+    // message must still be marked processed so interpret+fal don't re-run forever.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const d = deps({
+      produceImage: vi.fn().mockRejectedValue(new Error("boom")),
+      sendReply: vi.fn().mockRejectedValue(new Error("smtp down")),
+    });
+    await expect(processEmail(baseEmail(), d)).rejects.toThrow("smtp down");
+    expect(d.processed.add).toHaveBeenCalledWith("m1");
+    errorSpy.mockRestore();
   });
 
   it("retries (throws, no reply, not marked) when interpret fails under the cap", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const record = vi.fn().mockReturnValue(1);
     const d = deps({ anthropic: anthropicThrowing(), attempts: { record, clear: vi.fn() } });
     await expect(processEmail(baseEmail(), d)).rejects.toThrow();
     expect(record).toHaveBeenCalledWith("m1");
     expect(d.sendReply).not.toHaveBeenCalled();
     expect(d.processed.add).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("attempt 1/3"), expect.any(Error));
+    errorSpy.mockRestore();
   });
 
-  it("gives up with an error reply once the interpret attempt cap is reached", async () => {
+  it("gives up with a 'temporarily unavailable' reply (not 'rephrase') once the interpret attempt cap is reached on a transport/API error", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const record = vi.fn().mockReturnValue(3);
     const clear = vi.fn();
     const d = deps({ anthropic: anthropicThrowing(), attempts: { record, clear } });
     const r = await processEmail(baseEmail(), d);
     expect(r).toBe("error");
     const reply = (d.sendReply as any).mock.calls[0][0];
-    expect(reply.text).toMatch(/couldn't understand|rephrase/i);
+    expect(reply.text).toMatch(/unavailable/i);
+    expect(reply.text).not.toMatch(/rephrase/i);
     expect(d.processed.add).toHaveBeenCalledWith("m1");
     expect(clear).toHaveBeenCalledWith("m1"); // counter cleared, not leaked
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("gave up after 3 attempts"), expect.any(Error));
+    errorSpy.mockRestore();
+  });
+
+  it("clears the attempts counter and marks processed even when the interpret give-up reply fails to send", async () => {
+    // At the cap, a persistently broken Gmail send must not leave the counter
+    // leaked or the message unprocessed — otherwise interpret re-runs forever.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const record = vi.fn().mockReturnValue(3);
+    const clear = vi.fn();
+    const d = deps({
+      anthropic: anthropicThrowing(),
+      attempts: { record, clear },
+      sendReply: vi.fn().mockRejectedValue(new Error("smtp down")),
+    });
+    await expect(processEmail(baseEmail(), d)).rejects.toThrow("smtp down");
+    expect(clear).toHaveBeenCalledWith("m1");
+    expect(d.processed.add).toHaveBeenCalledWith("m1");
+    errorSpy.mockRestore();
+  });
+
+  it("gives up with a 'couldn't understand / rephrase' reply once the cap is reached on a malformed decision (non-transport error)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const record = vi.fn().mockReturnValue(3);
+    const clear = vi.fn();
+    const malformed: AnthropicLike = {
+      messages: { async create() { return { content: [{ type: "tool_use", name: "decide", input: { task: "generate" } }] }; } },
+    };
+    const d = deps({ anthropic: malformed, attempts: { record, clear } });
+    const r = await processEmail(baseEmail(), d);
+    expect(r).toBe("error");
+    const reply = (d.sendReply as any).mock.calls[0][0];
+    expect(reply.text).toMatch(/couldn't understand|rephrase/i);
+    expect(d.processed.add).toHaveBeenCalledWith("m1");
+    expect(clear).toHaveBeenCalledWith("m1");
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("gave up after 3 attempts"), expect.any(Error));
+    errorSpy.mockRestore();
   });
 });

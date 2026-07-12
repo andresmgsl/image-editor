@@ -28,14 +28,16 @@ const mailbox = new GmailMailbox(gmail as unknown as GmailApi, config.gmail.user
 
 const processed = loadProcessedStore(".processed/ids.json");
 const attempts = loadAttemptStore(".processed/attempts.json");
-const library = loadReferenceLibrary(process.env.REFERENCE_ASSETS_DIR ?? "assets");
+const library = await loadReferenceLibrary(process.env.REFERENCE_ASSETS_DIR ?? "assets");
 
 // Adapt the real @fal-ai/client to our FalLike interface. The real
 // `fal.storage.upload` expects a Blob, so wrap the Buffer in a Uint8Array.
 const falAdapter: FalLike = {
   subscribe: (endpoint, opts) =>
     fal.subscribe(endpoint, opts) as ReturnType<FalLike["subscribe"]>,
-  storage: { upload: (data: Buffer) => fal.storage.upload(new Blob([new Uint8Array(data)])) },
+  storage: {
+    upload: (data: Buffer) => fal.storage.upload(new Blob([new Uint8Array(data)], { type: "image/jpeg" })),
+  },
 };
 
 const produceImage = async (args: {
@@ -60,8 +62,20 @@ const deps: LoopDeps = {
   library,
 };
 
+// Graceful shutdown: flip a mutable flag on SIGTERM/SIGINT so the loop drains its
+// current poll cycle and exits cleanly instead of being killed mid-flight.
+let shouldStop = false;
+process.on("SIGTERM", () => {
+  shouldStop = true;
+});
+process.on("SIGINT", () => {
+  shouldStop = true;
+});
+
 console.log(`Email image editor started as ${config.gmail.user}. Polling every ${config.pollIntervalSeconds}s.`);
-runLoop(deps, config.pollIntervalSeconds * 1000, () => false).catch((err) => {
-  console.error("Fatal loop error:", err);
+runLoop(deps, config.pollIntervalSeconds * 1000, () => shouldStop).catch((err) => {
+  // Never log the raw error object here either — see loop.ts's per-cycle
+  // catch for why (gaxios doesn't redact the OAuth refresh_token body param).
+  console.error("Fatal loop error:", err instanceof Error ? err.message : String(err));
   process.exit(1);
 });
