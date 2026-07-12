@@ -24,7 +24,10 @@ Telegram ──long poll (Bot API)──▶ interpret (Claude) ──▶ generat
 ```
 
 Every incoming update flows through this pipeline
-(`src/telegram-loop.ts` → `src/telegram-handler.ts`):
+(`src/telegram-loop.ts` → `src/telegram-handler.ts`). External calls along the
+way (Claude, Fal, image/file downloads) are all bounded by timeouts — see
+[Reliability & limits](#reliability--limits) — so one stalled call can't hang
+the single-threaded bot indefinitely.
 
 1. **Long poll** — `getUpdates` with a 30s server-side timeout and
    `allowed_updates=["message"]`, so edited messages, channel posts, reactions,
@@ -46,27 +49,42 @@ Every incoming update flows through this pipeline
    call.
 5. **Interpret** (`src/interpreter.ts`) — one Claude call (`claude-opus-4-8`,
    forced tool-use) decides: **generate** vs **edit** vs **clarify**, picks a
-   model from the catalog, and writes a refined prompt. Any framing or aspect
-   ratio the user asked for (e.g. "wide 16:9 banner") is encoded **in the
-   prompt text** — there is no separate aspect-ratio field. If Claude says
-   "edit" but no image was attached, the bot asks for the image instead of
-   erroring; if it returns an invalid model id, the default for the task is
-   used.
+   model from the catalog, writes a refined prompt, and — if the request names
+   a known person or brand asset — returns `references: string[]` (reference-
+   library ids to inject). Any framing or aspect ratio the user asked for
+   (e.g. "wide 16:9 banner") is encoded **in the prompt text** — there is no
+   separate aspect-ratio field. If Claude says "edit" but no image was
+   attached, the bot asks for the image instead of erroring; if it returns an
+   invalid model id, the default for the task is used.
 6. **Pin or auto** — if the user pinned a model with `/model <id>`
    (persisted in `.state/telegram-prefs.json`), it's used **only when it's
    valid for the task**; otherwise the request falls back to Claude's automatic
    pick with a note in the reply caption.
-7. **Fetch input** — for edits, the attached image is downloaded via
+7. **Resolve references** (`src/reference-library.ts` →
+   `src/reference-routing.ts`) — any `references` from step 5 are resolved to
+   already-downscaled image buffers from the library. `resolveGeneration`
+   gathers `[userImages, refImages]` into one ordered list and, whenever 2 or
+   more images are present, forces an array-image edit model (Nano Banana Pro
+   Edit, or Seedream Edit) regardless of what was picked/pinned — capping the
+   total at `MAX_INJECTED_IMAGES` = 8. See
+   [Reference assets](#reference-assets-people--brand) below.
+8. **Fetch input** — for edits, the attached image is downloaded via
    `getFile` (`src/telegram-client.ts`).
-8. **Fal.ai** (`src/fal-runner.ts`) — uploads the input image (if any) to Fal
-   storage and calls the chosen endpoint. Each edit model declares whether its
-   endpoint takes a single `image_url` string or an `image_urls` array
+9. **Fal.ai** (`src/fal-runner.ts`) — uploads the input image(s) (if any) to
+   Fal storage and calls the chosen endpoint. Each edit model declares whether
+   its endpoint takes a single `image_url` string or an `image_urls` array
    (see `imageInput` in `src/catalog.ts`).
-9. **Downscale** (`src/image.ts`) — the result is downloaded and resized with
-   sharp to a JPEG of at most 1024 px on the long edge (quality 80).
-10. **Reply** — `sendPhoto` with a caption of the form
+10. **Downscale** (`src/image.ts`) — the result is downloaded and resized with
+    sharp to a JPEG of at most 1024 px on the long edge (quality 80);
+    transparent regions are flattened to white first.
+11. **Reply** — `sendPhoto` with a caption of the form
     `🎨/✏️ <model label> · <refined prompt>` (truncated to Telegram's 1024-char
-    caption limit), plus a note when a pin was bypassed.
+    caption limit — the *prompt* is truncated, not the note, so a note like
+    "(auto-switched…)" or "(capped at 8 images…)" always survives), plus a
+    note when a pin was bypassed. If `sendPhoto` itself fails after a
+    successful generation, the bot falls back to a plain text message so the
+    paid result isn't dropped silently — see
+    [Delivery semantics](#delivery-semantics).
 
 Two small file-backed stores live under **`.state/`** (auto-created; must be a
 persistent volume in production):
@@ -79,13 +97,23 @@ persistent volume in production):
 ### Delivery semantics
 
 - **Restarts don't reprocess handled work.** The poll offset is persisted
-  (written atomically after each batch), so a restart or redeploy resumes past
-  updates the previous process already handled — it does not re-bill Claude/Fal
-  for them.
-- **…but delivery is at-least-once, not exactly-once.** The offset is persisted
-  after each *batch* of updates, so an update handled just before a crash
-  mid-batch can be re-delivered and re-run on restart. In practice that means a
-  rare duplicate image reply after a crash, never silently lost work.
+  (written atomically) **after each handled update**, not just once per batch,
+  so a restart or redeploy resumes past every update the previous process
+  already handled — it does not re-bill Claude/Fal for them.
+- **…but delivery is at-least-once, not exactly-once.** A crash or SIGKILL can
+  still land between "update handled" and "offset persisted" for the *single*
+  in-flight update — so at most one update can be re-delivered and re-run on
+  restart, never a whole batch. In practice that means a rare duplicate image
+  reply right after a crash, never silently lost work.
+- **Graceful shutdown.** Both entrypoints handle `SIGTERM`/`SIGINT` by flipping
+  a `shouldStop` flag; the current poll cycle drains and the process exits
+  cleanly instead of being killed mid-update. This pairs with the container's
+  `tini` init (see [DEPLOY.md](./DEPLOY.md)) and further shrinks the
+  at-least-once window above to genuine crashes/SIGKILLs.
+- **`sendPhoto` delivery fallback.** If sending the generated photo fails
+  after a successful (paid) generation, the bot sends a fallback text message
+  ("generated but couldn't deliver it — please try again") instead of going
+  silent — and this is never mislabeled as a generation failure in the logs.
 - **Downtime creates a backlog, not loss.** Messages sent while the bot is down
   are queued by Telegram and processed on the next start.
 - **One request at a time.** Updates are handled sequentially, so teammates'
@@ -170,19 +198,65 @@ All commands are case-insensitive and work as `/cmd@yourbotname` in groups.
 | Two teammates at once | Requests are handled one at a time — the second queues behind the first's 30–60 s generation |
 | Aspect ratio / framing | Say it in the message ("wide 16:9 banner", "square icon") — it's encoded in the prompt text; there is no separate aspect-ratio parameter |
 | Pinned model can't do the task | Falls back to automatic selection for that request, with a note in the caption |
+| A named person/brand reference, no attachment ("an image of Andrés riding a horse") | Reference images are injected automatically; 2+ injected images force an array-image edit model (Nano Banana Pro Edit / Seedream Edit) |
+| Generated image has transparent regions (logo/icon models) | Flattened to **white**, not black, before the JPEG reply |
 
 Every image reply's caption shows what ran: `🎨 <model label> · <prompt>` for
 generations, `✏️ <model label> · <prompt>` for edits.
 
 ### Reference assets (people & brand)
 
-The bot can inject known people and La Familia brand images into a generation.
-Add entries under `assets/` (see `assets/README.md`), then name them in a request:
+The bot can inject known people and La Familia brand images into a generation
+— no "me" concept; even the requesting user is referenced by name, like
+anyone else. Add entries under `assets/` (manifest shape and photo guidance in
+[`assets/README.md`](./assets/README.md)), then name them in a request:
 
 > "create an image of Andrés with the official Familia shirt in a public square"
 
-Named references are auto-injected; requests with 2+ images run on Nano Banana
-Pro Edit (or Seedream Edit). No attachment is required to use references.
+- **Manifest** (`assets/library.json`): an array of entries, each with `id`
+  (unique slug used internally), `kind` (`"person"` | `"brand"`), `name`
+  (display name), `aliases` (other names/spellings the bot should match),
+  `description` (a short disambiguation line shown to Claude), and `images`
+  (one or more paths, relative to `assets/`, that must exist on disk).
+- **Name/alias matching** is done by Claude (`src/interpreter.ts`) against the
+  library's `name`/`aliases`/`description` — the request just has to name the
+  person or asset naturally; there's no special syntax.
+- **Routing rule:** whenever the final image list (user attachment(s) +
+  resolved references) has **2 or more images**, the model is forced to an
+  array-image edit model — **Nano Banana Pro Edit** by default, or Seedream
+  Edit — overriding whatever was picked or pinned, with a note in the reply
+  caption. Exactly one image keeps any capable edit model; zero images keeps
+  a plain text-to-image model.
+- **Cap:** total injected images (user + reference) are capped at
+  `MAX_INJECTED_IMAGES` = 8; the user's own attachment(s) are always kept,
+  reference images are dropped first, and a drop is always reported in the
+  caption, never silent.
+- **No attachment needed** — references work standalone ("an image of Andrés
+  riding a horse") or combined with an attached photo.
+- **Edge behavior:** an `edit` request whose references resolve to zero
+  images, with no attachment either, asks for the photo instead of failing
+  opaquely; a request naming references that don't resolve, with no
+  attachment, replies that the reference couldn't be found instead of
+  generating something unrelated; the same case *with* an attachment proceeds
+  on the attachment and notes the missing reference in the caption.
+
+### Reliability & limits
+
+- **Timeouts on every external call in the request path:** Fal generation
+  (`fal.subscribe`) 300 s, Fal storage upload 60 s, downloading the generated
+  result 30 s (32 MB cap), Telegram file/photo downloads 20 s (20 MB cap).
+  Nothing in the request path can hang the bot indefinitely.
+- **Input size caps:** a photo or document over 20 MB is rejected with a
+  "too large" reply before any Claude/Fal spend.
+- **Image injection cap:** at most 8 images (user + reference) are sent to
+  Fal in one call — see [Reference assets](#reference-assets-people--brand).
+- **Startup contract for reference assets:** every image listed in
+  `assets/library.json` is decoded and downscaled with `sharp` at startup,
+  so it must be a sharp-decodable format (JPEG/PNG/WebP/etc.) — a bad or
+  undecodable file fails startup loudly, same as a missing file or malformed
+  manifest.
+- **One request at a time:** the bot processes one update fully before
+  starting the next — see [Delivery semantics](#delivery-semantics).
 
 ---
 
@@ -239,6 +313,13 @@ Edit endpoints differ in how they accept the input image: some take a single
 `image_url` string, others an `image_urls` array. Each edit model **declares
 its field** via `imageInput` in the catalog, and `src/fal-runner.ts` sends the
 right shape.
+
+**Reference-injection override:** whenever a request ends up injecting **2 or
+more images** (the user's attachment plus resolved reference-library images,
+or multiple references alone), routing overrides whatever model was
+picked/pinned to an array-image (`image_urls`) edit model — Nano Banana Pro
+Edit by default, or Seedream Edit — since a single-image model can't accept
+them. See [Reference assets](#reference-assets-people--brand).
 
 ### Adding a model
 
@@ -315,8 +396,18 @@ second call. Commands cost nothing.
 - **Gmail access is scoped to the single mailbox** (dormant flow) — the OAuth
   refresh token grants only `gmail.modify` + `gmail.send` for `GMAIL_USER`,
   with no domain-wide delegation.
-- The container runs as the non-root `node` user, and long polling means **no
-  inbound ports** are exposed anywhere.
+- **The email flow never logs raw provider error objects.** Gmail's OAuth
+  library redacts `client_secret`/`Authorization` from logged errors, but not
+  the `refresh_token` body parameter on a failed token refresh — so only
+  `err.message` is logged, never the raw error, to keep the refresh token out
+  of container logs.
+- **`.dockerignore` blocks credential/state material as defense-in-depth** —
+  `service_account.json`, `*credential*.json`, `client_secret*.json`,
+  `oauth-client*.json`, and `.state` are excluded even though the Dockerfile's
+  targeted `COPY`s already never touch them; this guards against a future
+  build change (e.g. a `COPY . .`) baking local secrets into the image.
+- The container runs as the non-root `node` user, runs under `tini` as PID 1,
+  and long polling means **no inbound ports** are exposed anywhere.
 
 ---
 
@@ -396,36 +487,42 @@ setup, the local image smoke test, the env-var reference, the single-replica /
 
 ```
 src/
-  telegram-index.ts    entrypoint / wiring for the Telegram bot (active)
-  telegram-client.ts   raw-fetch Bot API client (getUpdates, sendMessage, sendPhoto, getFile; 429 retry)
-  telegram-handler.ts  allowlist + commands + photo/document resolution + generate/edit/clarify flow
-  telegram-loop.ts     long-poll loop (offset advance/persist, backoff, per-update error isolation)
-  telegram-prefs.ts    file-backed per-user pinned-model store (.state/telegram-prefs.json)
-  telegram-offset.ts   file-backed getUpdates offset store (.state/telegram-offset.json)
-  email-index.ts       entrypoint / wiring for the dormant email flow
-  config.ts            env → typed config (TelegramConfig / AppConfig) + allowlist checks
-  google-auth.ts       validate the Gmail OAuth 2.0 credentials (email flow)
-  mailbox.ts           Gmail API read/send/mark-read + email parsing (email flow)
-  interpreter.ts       Claude (claude-opus-4-8) → structured routing decision (shared)
-  catalog.ts           Fal.ai model catalog (shared; edit this to add models)
-  fal-runner.ts        call the chosen Fal model, image_url vs image_urls (shared)
-  image.ts             download + sharp low-res downscale (shared)
-  orchestrator.ts      per-email control flow (allowlist, dedup, retry; email flow)
-  loop.ts              poll loop (email flow)
-  processed.ts         file-backed dedup store (email flow)
-  attempts.ts          file-backed interpret-retry counter (email flow)
+  telegram-index.ts     entrypoint / wiring for the Telegram bot (active); SIGTERM/SIGINT graceful shutdown
+  telegram-client.ts    raw-fetch Bot API client (getUpdates, sendMessage, sendPhoto, getFile; timeouts, 429 retry, size caps)
+  telegram-handler.ts   allowlist + commands + photo/document resolution + reference resolution + generate/edit/clarify flow
+  telegram-loop.ts      long-poll loop (per-update offset persist, backoff, per-update error isolation)
+  telegram-prefs.ts     file-backed per-user pinned-model store (.state/telegram-prefs.json)
+  telegram-offset.ts    file-backed getUpdates offset store (.state/telegram-offset.json)
+  email-index.ts        entrypoint / wiring for the dormant email flow; SIGTERM/SIGINT graceful shutdown
+  config.ts             env → typed config (TelegramConfig / AppConfig) + allowlist checks
+  google-auth.ts        validate the Gmail OAuth 2.0 credentials (email flow)
+  mailbox.ts            Gmail API read/send/mark-read + email parsing (email flow)
+  interpreter.ts        Claude (claude-opus-4-8) → structured routing decision incl. references[] (shared)
+  catalog.ts            Fal.ai model catalog (shared; edit this to add models)
+  reference-library.ts  load/validate/downscale the reference-asset library (assets/library.json) at startup (shared)
+  reference-routing.ts  gather user + reference images, force an array-image model at 2+ images, cap at 8 (shared)
+  fal-runner.ts         call the chosen Fal model, image_url vs image_urls, with timeouts (shared)
+  image.ts              download (timeout + size cap) + sharp low-res downscale, white-flattened alpha (shared)
+  orchestrator.ts       per-email control flow (allowlist, dedup, retry, reference injection; email flow)
+  loop.ts               poll loop (email flow; redacted error logging)
+  processed.ts          file-backed dedup store, capped at 5000 ids (email flow)
+  attempts.ts           file-backed interpret-retry counter (email flow)
 scripts/
   get-refresh-token.mjs  one-time Gmail OAuth helper (npm run auth)
   release.sh             build + push + Coolify redeploy (npm run release)
-test/              Vitest unit tests (mocked collaborators)
-Dockerfile         multi-stage node:20-slim build, non-root, CMD runs dist/telegram-index.js
+test/              Vitest unit tests (mocked collaborators; 163 tests)
+assets/            reference-asset library (assets/library.json + images) baked into the image
+Dockerfile         multi-stage node:20-slim build, non-root, tini init + HEALTHCHECK, CMD runs dist/telegram-index.js
 DEPLOY.md          deployment runbook
+CHANGELOG.md       dated summary of feature/audit work
+docs/audits/       raw audit reports (historical; findings remediated — see CHANGELOG.md)
 docs/superpowers/  design specs + implementation plans (how this was built)
 ```
 
 ## How this was built
 
 Each piece — the email app, the Gmail auth migration, the Docker/Coolify
-deploy, and the Telegram bot front-end — went through a spec → plan →
-test-driven build, reviewed task by task. The design specs and implementation
-plans live under `docs/superpowers/`.
+deploy, the Telegram bot front-end, the reference library, and the Fable-5
+audit remediation — went through a spec → plan → test-driven build, reviewed
+task by task. The design specs and implementation plans live under
+`docs/superpowers/`; the raw audit reports live under `docs/audits/`.

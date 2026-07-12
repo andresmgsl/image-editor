@@ -1,3 +1,9 @@
+> **Raw audit report — historical record.** All findings below were remediated
+> in the audit-fixes pass; see [`CHANGELOG.md`](../../CHANGELOG.md) for the
+> user-facing summary and
+> [`docs/superpowers/plans/2026-07-12-audit-fixes.md`](../superpowers/plans/2026-07-12-audit-fixes.md)
+> for the task-by-task fix plan. This file is left as originally written.
+
 # Infrastructure / I/O / Security Audit — image-generation bot
 
 Auditor: Fable 5 (senior code auditor, security focus). Read-only pass.

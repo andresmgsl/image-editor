@@ -34,7 +34,13 @@ Day-to-day: **edit code → commit → `npm run release` → live.**
    - `TELEGRAM_ALLOWLIST` — comma-separated numeric Telegram user ids
 4. **No ports / no HTTP health check** — it's a worker that long-polls the
    Telegram Bot API. Leave ports empty; disable any HTTP health check. Set
-   restart to on-failure / unless-stopped.
+   restart to on-failure / unless-stopped. The image already bakes in its own
+   container-level `HEALTHCHECK` (a `pgrep` for the worker process, since
+   there's no HTTP port to probe) and runs under `tini` as PID 1 (reaps
+   zombies, forwards `SIGTERM`/`SIGINT` so graceful shutdown works) — if
+   Coolify exposes toggles for "use image's healthcheck" or "use image's
+   init", nothing extra needs configuring; otherwise no action is needed
+   either way, since both are already in the image.
 5. **Exactly one replica.** Long polling allows only **one** `getUpdates`
    consumer per bot token — a second replica (or an old container still
    running during a deploy) makes Telegram return **409 Conflict** to both.
@@ -46,14 +52,29 @@ Day-to-day: **edit code → commit → `npm run release` → live.**
    and re-fetches Telegram's retained update backlog. The `/app/.processed`
    directory (the email flow's dedup/retry state) is **not** used by the
    Telegram transport — no need to mount it.
+7. **Reference assets, if you use them:** every image listed in
+   `assets/library.json` must be a valid, `sharp`-decodable image (JPEG/PNG/
+   WebP/etc.) — the library is decoded and downscaled at startup, so a bad or
+   undecodable file fails startup loudly, the same fail-fast posture as a
+   missing/invalid env var. If you don't use the reference library, the
+   shipped `assets/library.json` is an empty array and this doesn't apply.
 
 ### Restart / redeploy semantics
 
 - The persisted offset means a restart **does not reprocess** updates the
-  previous process already handled.
-- Delivery is **at-least-once**: the offset is persisted per batch, so an
-  update handled just before a crash mid-batch can re-run once on restart
-  (worst case: a duplicate image reply).
+  previous process already handled — it's persisted **after each handled
+  update**, not just once per batch.
+- Delivery is **at-least-once**: even so, a crash can land between "update
+  handled" and "offset persisted" for the single in-flight update, so at most
+  **one** update can re-run on restart (worst case: a duplicate image reply)
+  — never a whole batch.
+- **Graceful shutdown:** the process handles `SIGTERM`/`SIGINT` by draining
+  the current poll cycle before exiting, so a normal stop/redeploy (not a
+  SIGKILL) shouldn't hit the at-least-once case at all. `tini` (PID 1 in the
+  image) makes sure that signal actually reaches the app. Coolify's
+  **stop-before-start** deploy strategy is still recommended regardless (see
+  above) — it's about avoiding two concurrent `getUpdates` pollers (409
+  Conflict), which graceful shutdown doesn't address.
 - Messages sent while the bot is down are **queued by Telegram** and processed
   as a backlog on the next start — nothing is lost.
 
@@ -128,8 +149,10 @@ to be set in Coolify unless you separately run the dormant email flow.
   includes their numeric Telegram id — add it to `TELEGRAM_ALLOWLIST` and
   redeploy.
 - **Duplicate reply right after a crash/redeploy:** expected at-least-once
-  behavior — the offset persists per batch, so the last in-flight update can
-  re-run once. Not a bug unless it repeats continuously (then check the
+  behavior — the offset persists after each handled update, so at most the
+  single in-flight update at the moment of the crash can re-run once (a
+  graceful `SIGTERM`/`SIGINT` stop drains first and shouldn't trigger this at
+  all). Not a bug unless it repeats continuously (then check the
   `/app/.state` volume is writable).
 - **Pinned models reset / old backlog replays after a redeploy:** the
   `/app/.state` volume isn't mounted (or is read-only) — both

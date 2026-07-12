@@ -1,3 +1,9 @@
+> **Raw audit report — historical record.** All findings below were remediated
+> in the audit-fixes pass; see [`CHANGELOG.md`](../../CHANGELOG.md) for the
+> user-facing summary and
+> [`docs/superpowers/plans/2026-07-12-audit-fixes.md`](../superpowers/plans/2026-07-12-audit-fixes.md)
+> for the task-by-task fix plan. This file is left as originally written.
+
 # Audit: Generation Core (interpreter → routing → fal → transports)
 
 Date: 2026-07-12 · Auditor: Fable 5 (adversarial read-only audit)
