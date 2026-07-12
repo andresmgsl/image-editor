@@ -26,6 +26,7 @@ function deps(over: Partial<OrchestratorDeps> = {}): OrchestratorDeps {
     sendReply: vi.fn().mockResolvedValue(undefined),
     processed: { has: () => false, add: vi.fn() },
     attempts: { record: vi.fn().mockReturnValue(1), clear: vi.fn() },
+    library: { entries: [], resolveImages: () => [] },
     ...over,
   };
 }
@@ -75,6 +76,36 @@ describe("processEmail", () => {
     const reply = (d.sendReply as any).mock.calls[0][0];
     expect(reply.image).toBeUndefined();
     expect(d.produceImage).not.toHaveBeenCalled();
+  });
+
+  it("generates from references when edit is requested with no attached image", async () => {
+    const refBufs = [Buffer.from("r1")];
+    const d = deps({
+      anthropic: anthropicReturning({ task: "edit", modelId: "nano-banana-pro-edit", prompt: "night", references: ["andres"] }),
+      library: { entries: [], resolveImages: () => refBufs },
+    });
+    const r = await processEmail(baseEmail(), d); // no imageAttachment, but a reference resolves
+    expect(r).toBe("generated");
+    expect(d.produceImage).toHaveBeenCalledWith(
+      expect.objectContaining({ endpoint: "fal-ai/nano-banana-pro/edit", inputImages: refBufs }),
+    );
+  });
+
+  it("injects reference images and forces an array-image model", async () => {
+    const refBufs = [Buffer.from("r1"), Buffer.from("r2")];
+    const d = deps({
+      anthropic: anthropicReturning({ task: "generate", modelId: "nano-banana-pro", prompt: "a scene", references: ["andres"] }),
+      library: { entries: [], resolveImages: () => refBufs },
+    });
+    const r = await processEmail(baseEmail(), d);
+    expect(r).toBe("generated");
+    expect(d.produceImage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        endpoint: "fal-ai/nano-banana-pro/edit",
+        inputImages: refBufs,
+        imageInput: "image_urls",
+      }),
+    );
   });
 
   it("replies with an error message when generation throws", async () => {

@@ -16,7 +16,7 @@ describe("interpret", () => {
   it("returns a validated generate decision", async () => {
     const client = fakeClient({ task: "generate", modelId: "flux-schnell", prompt: "a red bike" });
     const d = await interpret(client, { text: "make a red bike", hasImage: false });
-    expect(d).toEqual({ task: "generate", modelId: "flux-schnell", prompt: "a red bike" });
+    expect(d).toEqual({ task: "generate", modelId: "flux-schnell", prompt: "a red bike", references: [] });
   });
 
   it("falls back to the default model when Claude picks an invalid id", async () => {
@@ -51,7 +51,54 @@ describe("interpret", () => {
       },
     };
     const d = await interpret(client, { text: "a red bike", hasImage: false });
-    expect(d).toEqual({ task: "generate", modelId: "flux-schnell", prompt: "a red bike" });
+    expect(d).toEqual({ task: "generate", modelId: "flux-schnell", prompt: "a red bike", references: [] });
     expect(call).toBe(2); // retried once
+  });
+
+  it("passes references through when the model names library entries", async () => {
+    const client = fakeClient({
+      task: "generate",
+      modelId: "nano-banana-pro",
+      prompt: "the person shown wearing the shirt in a square",
+      references: ["andres", "shirt"],
+    });
+    const d = await interpret(client, {
+      text: "andres with the official shirt in a square",
+      hasImage: false,
+      library: [
+        { id: "andres", kind: "person", name: "Andrés", aliases: [], description: "", images: ["a.jpg"] },
+        { id: "shirt", kind: "brand", name: "Shirt", aliases: [], description: "", images: ["s.jpg"] },
+      ],
+    });
+    if (d.task !== "clarify") expect(d.references).toEqual(["andres", "shirt"]);
+  });
+
+  it("defaults references to [] when the model omits them", async () => {
+    const client = fakeClient({ task: "generate", modelId: "flux-schnell", prompt: "a red bike" });
+    const d = await interpret(client, { text: "a red bike", hasImage: false });
+    if (d.task !== "clarify") expect(d.references).toEqual([]);
+  });
+
+  it("renders the reference library into the system prompt sent to the model", async () => {
+    let capturedSystem = "";
+    const client: AnthropicLike = {
+      messages: {
+        async create(args: any) {
+          capturedSystem = args.system;
+          return {
+            content: [
+              { type: "tool_use", name: "decide", input: { task: "generate", modelId: "flux-schnell", prompt: "a red bike" } },
+            ],
+          };
+        },
+      },
+    };
+    await interpret(client, {
+      text: "a red bike",
+      hasImage: false,
+      library: [{ id: "andres", kind: "person", name: "Andrés", aliases: [], description: "", images: ["a.jpg"] }],
+    });
+    expect(capturedSystem).toContain("andres");
+    expect(capturedSystem).toContain("Andrés");
   });
 });

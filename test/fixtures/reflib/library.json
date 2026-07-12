@@ -1,0 +1,18 @@
+[
+  {
+    "id": "andres",
+    "kind": "person",
+    "name": "Andrés",
+    "aliases": ["andres"],
+    "description": "Andrés, team member",
+    "images": ["people/andres/1.jpg", "people/andres/2.jpg"]
+  },
+  {
+    "id": "shirt",
+    "kind": "brand",
+    "name": "Official La Familia shirt",
+    "aliases": ["camiseta oficial", "official shirt"],
+    "description": "The official La Familia Solana t-shirt",
+    "images": ["brand/shirt/front.jpg"]
+  }
+]

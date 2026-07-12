@@ -8,6 +8,7 @@ function depsWith(getUpdates: any): HandlerDeps {
     telegram: { getUpdates, sendMessage: vi.fn(), sendPhoto: vi.fn(), getFileBuffer: vi.fn() },
     anthropic: { messages: { create: vi.fn() } }, produceImage: vi.fn(),
     allowlist: [111], prefs: { get: () => undefined, set: () => {} },
+    library: { entries: [], resolveImages: () => [] },
   };
 }
 

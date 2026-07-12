@@ -10,6 +10,7 @@ import { loadAttemptStore } from "./attempts.js";
 import { runModel, type FalLike } from "./fal-runner.js";
 import { downloadImage, toLowRes } from "./image.js";
 import { runLoop, type LoopDeps } from "./loop.js";
+import { loadReferenceLibrary } from "./reference-library.js";
 
 const config = loadConfig(process.env);
 if (config.allowlist.length === 0) {
@@ -27,6 +28,7 @@ const mailbox = new GmailMailbox(gmail as unknown as GmailApi, config.gmail.user
 
 const processed = loadProcessedStore(".processed/ids.json");
 const attempts = loadAttemptStore(".processed/attempts.json");
+const library = loadReferenceLibrary(process.env.REFERENCE_ASSETS_DIR ?? "assets");
 
 // Adapt the real @fal-ai/client to our FalLike interface. The real
 // `fal.storage.upload` expects a Blob, so wrap the Buffer in a Uint8Array.
@@ -55,6 +57,7 @@ const deps: LoopDeps = {
   processed,
   attempts,
   mailbox,
+  library,
 };
 
 console.log(`Email image editor started as ${config.gmail.user}. Polling every ${config.pollIntervalSeconds}s.`);

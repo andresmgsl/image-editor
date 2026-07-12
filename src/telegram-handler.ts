@@ -1,8 +1,10 @@
 import { interpret, type AnthropicLike } from "./interpreter.js";
-import { CATALOG, getModel, isValidChoice } from "./catalog.js";
+import { CATALOG, getModel, isValidChoice, type CatalogModel } from "./catalog.js";
 import { isUserAllowed } from "./config.js";
+import { resolveGeneration } from "./reference-routing.js";
 import type { TgUpdate, TelegramApi } from "./telegram-client.js";
 import type { PrefsStore } from "./telegram-prefs.js";
+import type { ReferenceLibrary } from "./reference-library.js";
 
 // Telegram caption limit, counted in UTF-16 code units.
 // https://core.telegram.org/bots/api#sendphoto
@@ -23,6 +25,7 @@ export interface HandlerDeps {
   produceImage: (args: ProduceImageArgs) => Promise<Buffer>;
   allowlist: number[];
   prefs: PrefsStore;
+  library: ReferenceLibrary;
 }
 
 const HELP =
@@ -144,7 +147,11 @@ export async function handleUpdate(update: TgUpdate, deps: HandlerDeps): Promise
 
   let decision;
   try {
-    decision = await interpret(deps.anthropic, { text: rawText, hasImage: !!imageFileId });
+    decision = await interpret(deps.anthropic, {
+      text: rawText,
+      hasImage: !!imageFileId,
+      library: deps.library.entries,
+    });
   } catch (err) {
     console.error(`user=${userId} interpret failed:`, err);
     await deps.telegram.sendMessage(chatId, "Sorry — I couldn't understand that. Please rephrase and try again.");
@@ -156,7 +163,7 @@ export async function handleUpdate(update: TgUpdate, deps: HandlerDeps): Promise
     return;
   }
 
-  if (decision.task === "edit" && !imageFileId) {
+  if (decision.task === "edit" && !imageFileId && decision.references.length === 0) {
     // Claude asked to edit but the user attached no image — guide them instead of 422-ing fal.
     await deps.telegram.sendMessage(
       chatId,
@@ -172,35 +179,40 @@ export async function handleUpdate(update: TgUpdate, deps: HandlerDeps): Promise
     if (isValidChoice(pinned, decision.task)) modelId = pinned;
     else note = ` (pinned ${pinned} can't ${decision.task} — used auto)`;
   }
-  const model = getModel(modelId)!;
 
   const started = Date.now();
-  const logSuffix = () =>
-    `user=${userId} task=${decision.task} model=${model.id} pinned=${pinned ?? "auto"} ` +
-    `prompt=${JSON.stringify(decision.prompt)}`;
 
   let image: Buffer;
+  let model: CatalogModel;
   try {
-    let inputImages: Buffer[] | undefined;
-    if (decision.task === "edit" && imageFileId) {
-      inputImages = [await deps.telegram.getFileBuffer(imageFileId)];
-    }
+    const userImages: Buffer[] = [];
+    if (imageFileId) userImages.push(await deps.telegram.getFileBuffer(imageFileId));
+    const refImages = deps.library.resolveImages(decision.references);
+    const resolved = resolveGeneration({ chosenModelId: modelId, userImages, refImages });
+    model = resolved.model;
+    note += resolved.overrideNote;
+    if (resolved.droppedCount > 0) note += ` (capped at 8 images; dropped ${resolved.droppedCount})`;
     image = await deps.produceImage({
       endpoint: model.endpoint,
       prompt: decision.prompt,
-      inputImages,
+      inputImages: resolved.images.length ? resolved.images : undefined,
       imageInput: model.imageInput,
     });
   } catch (err) {
-    console.error(`${logSuffix()} err ${((Date.now() - started) / 1000).toFixed(1)}s`, err);
+    console.error(
+      `user=${userId} task=${decision.task} pinned=${pinned ?? "auto"} err ` +
+        `${((Date.now() - started) / 1000).toFixed(1)}s`,
+      err,
+    );
     await deps.telegram.sendMessage(chatId, "Sorry — that request failed to generate. Please try again.");
     return;
   }
 
   const emoji = decision.task === "edit" ? "✏️" : "🎨";
   const caption = truncateCaption(`${emoji} ${model.label} · ${decision.prompt}${note}`);
-  // Outside the try/catch above: a sendPhoto failure is not a "failed to generate" — the image
-  // was already produced. Let it propagate to the caller (the loop logs it per-update).
   await deps.telegram.sendPhoto(chatId, image, caption);
-  console.log(`${logSuffix()} ok ${((Date.now() - started) / 1000).toFixed(1)}s`);
+  console.log(
+    `user=${userId} task=${decision.task} model=${model.id} pinned=${pinned ?? "auto"} ` +
+      `refs=${JSON.stringify(decision.references)} ok ${((Date.now() - started) / 1000).toFixed(1)}s`,
+  );
 }

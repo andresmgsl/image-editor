@@ -1,10 +1,21 @@
 import { z } from "zod";
 import { CATALOG, isValidChoice, defaultModelFor } from "./catalog.js";
+import type { ReferenceEntry } from "./reference-library.js";
 
 export const DecisionSchema = z.discriminatedUnion("task", [
   z.object({ task: z.literal("clarify"), message: z.string().min(1) }),
-  z.object({ task: z.literal("generate"), modelId: z.string(), prompt: z.string().min(1) }),
-  z.object({ task: z.literal("edit"), modelId: z.string(), prompt: z.string().min(1) }),
+  z.object({
+    task: z.literal("generate"),
+    modelId: z.string(),
+    prompt: z.string().min(1),
+    references: z.array(z.string()).default([]),
+  }),
+  z.object({
+    task: z.literal("edit"),
+    modelId: z.string(),
+    prompt: z.string().min(1),
+    references: z.array(z.string()).default([]),
+  }),
 ]);
 
 export type Decision = z.infer<typeof DecisionSchema>;
@@ -29,12 +40,38 @@ const DECIDE_TOOL = {
           "The refined prompt for the model. Required for generate/edit. Encode any framing or aspect ratio (e.g. 'wide 16:9 banner') in this text.",
       },
       message: { type: "string", description: "For clarify only: what to ask the sender." },
+      references: {
+        type: "array",
+        items: { type: "string" },
+        description:
+          "Reference-library ids to inject (people/brand assets named in the request). Omit or [] if none.",
+      },
     },
     required: ["task"],
   },
 } as const;
 
-function systemPrompt(): string {
+function librarySection(library: ReferenceEntry[]): string {
+  if (library.length === 0) return "";
+  const lines = library
+    .map((e) => {
+      const aka = e.aliases.length ? ` (aka ${e.aliases.join(", ")})` : "";
+      const desc = e.description ? ` — ${e.description}` : "";
+      return `- ${e.id} [${e.kind}]: ${e.name}${aka}${desc}`;
+    })
+    .join("\n");
+  return [
+    "",
+    "Reference library — known people and brand assets you can inject by id:",
+    lines,
+    "When the request names any of these, put their id(s) in `references`. Their images",
+    "are added automatically; write the prompt describing the scene naturally (e.g. 'the",
+    "person shown wearing the shirt'). References do NOT require the user to attach an",
+    "image — only choose task 'edit' when the USER attached an image to modify.",
+  ].join("\n");
+}
+
+function systemPrompt(library: ReferenceEntry[]): string {
   const lines = CATALOG.map((m) => `- ${m.id} (${m.task}): ${m.description}`).join("\n");
   return [
     "You route image-creation and image-editing requests from users.",
@@ -46,6 +83,7 @@ function systemPrompt(): string {
     "",
     "Catalog:",
     lines,
+    librarySection(library),
   ].join("\n");
 }
 
@@ -55,14 +93,14 @@ const MAX_ATTEMPTS = 2;
 
 export async function interpret(
   client: AnthropicLike,
-  input: { text: string; hasImage: boolean },
+  input: { text: string; hasImage: boolean; library?: ReferenceEntry[] },
 ): Promise<Decision> {
   let lastErr: unknown = new Error("Interpreter: no attempts ran");
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const res = await client.messages.create({
       model: "claude-opus-4-8",
       max_tokens: 1024,
-      system: systemPrompt(),
+      system: systemPrompt(input.library ?? []),
       tools: [DECIDE_TOOL],
       tool_choice: { type: "tool", name: "decide" },
       messages: [

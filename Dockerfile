@@ -16,6 +16,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=builder /app/dist ./dist
+COPY assets ./assets
 # State dir for the file-backed stores (per-user model prefs + poll offset).
 # Coolify mounts a persistent volume here; the non-root `node` user must own it.
 RUN mkdir -p /app/.state && chown -R node:node /app
