@@ -12,3 +12,12 @@ test
 *.md
 Dockerfile
 .dockerignore
+
+# Secrets / credential material — defense-in-depth in case COPY . . is ever
+# introduced; targeted COPYs already exclude these, but never bake OAuth
+# client secrets or local runtime state into an image (audit M6).
+service_account.json
+*credential*.json
+client_secret*.json
+oauth-client*.json
+.state
